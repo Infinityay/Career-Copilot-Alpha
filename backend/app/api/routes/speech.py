@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import traceback
+import logging
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
@@ -10,6 +10,7 @@ from app.services.runtime_config import resolve_speech_config
 from app.services.speech_transcription_service import create_transcription_service
 
 router = APIRouter(prefix="/speech", tags=["speech"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/status")
@@ -66,12 +67,12 @@ async def transcribe_speech(websocket: WebSocket):
             await websocket.close()
             return
 
-        print(
-            "speech websocket start:",
-            {
+        logger.info(
+            "speech websocket start",
+            extra={
                 "language": language,
                 "encoding": encoding,
-                "sampleRate": sample_rate,
+                "sample_rate": sample_rate,
             },
         )
 
@@ -89,15 +90,15 @@ async def transcribe_speech(websocket: WebSocket):
             message = await websocket.receive()
 
             if message["type"] == "websocket.disconnect":
-                print("speech websocket disconnected by client")
+                logger.info("speech websocket disconnected by client")
                 break
 
             if "bytes" in message and message["bytes"] is not None:
                 chunk_count += 1
                 if chunk_count <= 5 or chunk_count % 20 == 0:
-                    print(
-                        "speech websocket audio chunk:",
-                        {"index": chunk_count, "size": len(message["bytes"])},
+                    logger.info(
+                        "speech websocket audio chunk",
+                        extra={"index": chunk_count, "size": len(message["bytes"])}
                     )
                 await service.send_audio(message["bytes"])
                 continue
@@ -109,16 +110,15 @@ async def transcribe_speech(websocket: WebSocket):
                     continue
 
                 if text_payload.get("type") == "stop":
-                    print("speech websocket stop")
+                    logger.info("speech websocket stop")
                     break
 
     except WebSocketDisconnect:
-        print("speech websocket disconnected unexpectedly")
+        logger.info("speech websocket disconnected unexpectedly")
     except Exception as exc:
-        print("speech websocket error:", repr(exc))
-        traceback.print_exc()
+        logger.exception("speech websocket error")
         try:
-            await websocket.send_json({"type": "error", "message": str(exc)})
+            await websocket.send_json({"type": "error", "message": "Speech transcription failed"})
         except Exception:
             pass
     finally:

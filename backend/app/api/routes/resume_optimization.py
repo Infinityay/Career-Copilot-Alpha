@@ -1,5 +1,7 @@
 """Resume optimization API routes."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -10,6 +12,7 @@ from app.services.resume_optimizer import ResumeOptimizer
 from app.services.runtime_config import resolve_runtime_config
 
 router = APIRouter(prefix="/resume", tags=["resume-optimization"])
+logger = logging.getLogger(__name__)
 
 
 class ResumeOptimizationRequest(ResumeData):
@@ -39,14 +42,15 @@ async def get_resume_overview(request: ResumeOptimizationRequest):
         optimizer = _build_optimizer(request)
         result, _ = await optimizer.get_overview(ResumeData.model_validate(request.model_dump()))
         return result
-    except Exception as exc:
+    except Exception:
+        logger.exception("Resume overview failed")
         raise HTTPException(
             status_code=502,
             detail=_make_error(
                 "LLM_FAILED",
-                f"Failed to generate overview: {str(exc)}",
+                "Failed to generate overview",
             ),
-        ) from exc
+        )
 
 
 @router.post("/suggestions", response_model=ResumeSuggestionsResponse)
@@ -56,11 +60,12 @@ async def get_resume_suggestions(request: ResumeOptimizationRequest):
         optimizer = _build_optimizer(request)
         result, _ = await optimizer.get_suggestions(ResumeData.model_validate(request.model_dump()))
         return result
-    except Exception as exc:
+    except Exception:
+        logger.exception("Resume suggestions failed")
         raise HTTPException(
             status_code=502,
             detail=_make_error(
                 "LLM_FAILED",
-                f"Failed to generate suggestions: {str(exc)}",
+                "Failed to generate suggestions",
             ),
-        ) from exc
+        )

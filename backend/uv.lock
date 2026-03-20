@@ -123,7 +123,6 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pytest" },
     { name = "python-dotenv" },
     { name = "python-magic" },
     { name = "python-multipart" },
@@ -131,6 +130,11 @@ dependencies = [
     { name = "uvicorn" },
     { name = "zai-sdk" },
     { name = "zvec", marker = "sys_platform != 'win32'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -146,7 +150,6 @@ requires-dist = [
     { name = "openai", specifier = ">=1.68.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pytest", specifier = ">=8.3.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-magic", specifier = ">=0.4.27" },
     { name = "python-multipart", specifier = ">=0.0.9" },
@@ -155,6 +158,9 @@ requires-dist = [
     { name = "zai-sdk", specifier = ">=0.2.2" },
     { name = "zvec", marker = "sys_platform != 'win32'", specifier = "==0.2.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.3.0" }]
 
 [[package]]
 name = "certifi"

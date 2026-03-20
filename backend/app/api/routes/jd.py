@@ -1,6 +1,7 @@
 """JD extraction API routes."""
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException
 
@@ -11,6 +12,7 @@ from app.services.runtime_config import resolve_runtime_config
 router = APIRouter(prefix="/jd", tags=["jd"])
 
 MAX_TEXT_LENGTH = 30000
+logger = logging.getLogger(__name__)
 
 
 
@@ -51,16 +53,21 @@ async def extract_jd(request: JDExtractRequest):
         )
 
     except InvalidJDContentError as exc:
+        logger.warning("JD content validation failed")
         raise HTTPException(
             status_code=400,
-            detail=_make_error("INVALID_JD_CONTENT", str(exc)),
+            detail=_make_error(
+                "INVALID_JD_CONTENT",
+                "上传内容不是一份正常的岗位 JD，请粘贴职位描述后重试。",
+            ),
         ) from exc
 
     except Exception as exc:
+        logger.exception("JD extraction failed")
         raise HTTPException(
             status_code=502,
             detail=_make_error(
                 "LLM_FAILED",
-                f"Failed to extract JD data: {str(exc)}",
+                "Failed to extract JD data",
             ),
         ) from exc

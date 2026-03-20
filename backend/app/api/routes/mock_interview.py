@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
@@ -13,11 +14,19 @@ from app.services.mock_interview_service import MockInterviewService
 from app.services.runtime_config import resolve_runtime_config
 
 router = APIRouter(prefix="/mock-interview", tags=["mock-interview"])
+logger = logging.getLogger(__name__)
 
 
 
 def _format_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+
+def _build_sse_error(exc: Exception) -> dict:
+    if isinstance(exc, HTTPException) and isinstance(exc.detail, str):
+        return {"message": exc.detail, "status": exc.status_code}
+    return {"message": "Internal server error", "status": 500}
 
 
 
@@ -37,9 +46,11 @@ async def stream_create_mock_interview_session(
             async for item in service.stream_create_session(request):
                 yield _format_sse(item["event"], item["data"])
         except HTTPException as exc:
-            yield _format_sse("error", {"message": str(exc.detail), "status": exc.status_code})
+            logger.warning("Mock interview stream failed with HTTPException")
+            yield _format_sse("error", _build_sse_error(exc))
         except Exception as exc:  # pragma: no cover
-            yield _format_sse("error", {"message": str(exc), "status": 500})
+            logger.exception("Mock interview stream failed")
+            yield _format_sse("error", _build_sse_error(exc))
 
     return StreamingResponse(
         event_stream(),
@@ -64,9 +75,11 @@ async def stream_mock_interview_session(
             async for item in service.stream_turn(session_id, request):
                 yield _format_sse(item["event"], item["data"])
         except HTTPException as exc:
-            yield _format_sse("error", {"message": str(exc.detail), "status": exc.status_code})
+            logger.warning("Mock interview stream failed with HTTPException")
+            yield _format_sse("error", _build_sse_error(exc))
         except Exception as exc:  # pragma: no cover
-            yield _format_sse("error", {"message": str(exc), "status": 500})
+            logger.exception("Mock interview stream failed")
+            yield _format_sse("error", _build_sse_error(exc))
 
     return StreamingResponse(
         event_stream(),

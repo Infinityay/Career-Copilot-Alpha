@@ -18,11 +18,15 @@ dependencies = [
     "dashscope>=1.20.0",
     "modelscope>=1.23.0",
     "openai>=1.68.0",
-    "pytest>=8.3.0",
     "sentence-transformers>=3.0.0",
     "python-magic>=0.4.27",
     "zai-sdk>=0.2.2",
     "zvec==0.2.0; sys_platform != 'win32'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
 ]
 
 [tool.hatch.build.targets.wheel]

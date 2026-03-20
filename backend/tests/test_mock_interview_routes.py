@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.routes import mock_interview as mock_interview_route
@@ -482,3 +483,199 @@ def test_stream_mock_interview_reply_route_passes_answer_analysis_started_event_
         "speechAppKey": None,
         "speechAccessKey": None,
     }
+
+
+class FailingCreateService:
+    async def stream_create_session(self, request):
+        raise RuntimeError("provider stack trace leaked")
+        yield
+
+
+class HttpErrorCreateService:
+    async def stream_create_session(self, request):
+        raise HTTPException(status_code=409, detail="session already exists")
+        yield
+
+
+class FailingTurnService:
+    async def stream_turn(self, session_id, request):
+        raise RuntimeError("speech provider trace leaked")
+        yield
+
+
+def _build_create_request() -> dict:
+    return {
+        "interviewType": InterviewType.CAMPUS.value,
+        "category": Category.FRONTEND.value,
+        "jdText": "熟悉 React",
+        "jdData": {
+            "basicInfo": {"company": "阿里巴巴", "jobTitle": "前端开发工程师"},
+            "requirements": {"techStack": ["React"]},
+        },
+        "resumeData": {
+            "basicInfo": {
+                "name": "",
+                "personalEmail": "",
+                "phoneNumber": "",
+                "age": "",
+                "born": "",
+                "gender": "",
+                "desiredPosition": "",
+                "desiredLocation": [],
+                "currentLocation": "",
+                "placeOfOrigin": "",
+                "rewards": [],
+            },
+            "workExperience": [],
+            "education": [],
+            "projects": [],
+            "academicAchievements": [],
+        },
+    }
+
+
+def _build_stream_request() -> dict:
+    return {
+        "mode": "start",
+        "interviewType": InterviewType.CAMPUS.value,
+        "category": Category.FRONTEND.value,
+        "jdText": "熟悉 React",
+        "jdData": {
+            "basicInfo": {"company": "阿里巴巴", "jobTitle": "前端开发工程师"},
+            "requirements": {"techStack": ["React"]},
+        },
+        "resumeSnapshot": {
+            "basicInfo": {
+                "name": "",
+                "personalEmail": "",
+                "phoneNumber": "",
+                "age": "",
+                "born": "",
+                "gender": "",
+                "desiredPosition": "",
+                "desiredLocation": [],
+                "currentLocation": "",
+                "placeOfOrigin": "",
+                "rewards": [],
+            },
+            "workExperience": [],
+            "education": [],
+            "projects": [],
+            "academicAchievements": [],
+        },
+        "retrieval": {
+            "queryText": "前端开发\n校招\nReact",
+            "appliedFilters": {
+                "category": Category.FRONTEND.value,
+                "interviewType": InterviewType.CAMPUS.value,
+                "company": "阿里",
+            },
+            "items": [],
+        },
+        "interviewPlan": {
+            "plan": [
+                {"round": 1, "topic": "开场介绍", "description": "自我介绍与岗位动机。"},
+                {"round": 2, "topic": "项目概述", "description": "整体介绍最相关项目。"},
+                {"round": 3, "topic": "技术深挖", "description": "围绕关键技术决策和难点持续深挖。"},
+                {"round": 4, "topic": "LeetCode 编码", "description": "围绕指定代码题考察算法与实现能力。"}
+            ],
+            "total_rounds": 4,
+            "estimated_duration": "45-60分钟",
+            "leetcode_problem": "实现一个 LRU Cache"
+        },
+        "interviewState": {
+            "currentRound": 1,
+            "questionsPerRound": {"1": 0},
+            "assistantQuestionCount": 0,
+            "turnCount": 0,
+            "reflectionHistory": [],
+            "closed": False
+        },
+        "messages": [],
+    }
+
+
+def test_stream_create_mock_interview_session_sanitizes_generic_sse_errors(monkeypatch):
+    monkeypatch.setattr(
+        mock_interview_route,
+        "_build_service",
+        lambda runtime_config_request: FailingCreateService(),
+    )
+
+    response = client.post(
+        "/api/mock-interview/session/stream-create",
+        json=_build_create_request(),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    assert 'event: error' in response.text
+    assert '"message": "Internal server error"' in response.text
+    assert '"status": 500' in response.text
+    assert "provider stack trace leaked" not in response.text
+
+
+def test_stream_create_mock_interview_session_preserves_safe_http_error_detail(monkeypatch):
+    monkeypatch.setattr(
+        mock_interview_route,
+        "_build_service",
+        lambda runtime_config_request: HttpErrorCreateService(),
+    )
+
+    response = client.post(
+        "/api/mock-interview/session/stream-create",
+        json=_build_create_request(),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    assert 'event: error' in response.text
+    assert '"message": "session already exists"' in response.text
+    assert '"status": 409' in response.text
+
+
+def test_stream_mock_interview_session_sanitizes_generic_sse_errors(monkeypatch):
+    monkeypatch.setattr(
+        mock_interview_route,
+        "_build_service",
+        lambda runtime_config_request: FailingTurnService(),
+    )
+
+    response = client.post(
+        "/api/mock-interview/session/stub-session/stream",
+        json=_build_stream_request(),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    assert 'event: error' in response.text
+    assert '"message": "Internal server error"' in response.text
+    assert '"status": 500' in response.text
+    assert "speech provider trace leaked" not in response.text
+
+
+def test_speech_websocket_sanitizes_generic_runtime_errors(monkeypatch):
+    class SpeechConfigStub:
+        available = True
+
+    class FailingSpeechService:
+        async def start(self, **kwargs):
+            raise RuntimeError("speech provider trace leaked")
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.api.routes.speech.resolve_speech_config",
+        lambda runtime_config=None: SpeechConfigStub(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.speech.create_transcription_service",
+        lambda speech_config=None: FailingSpeechService(),
+    )
+
+    with client.websocket_connect("/api/speech/transcribe") as websocket:
+        websocket.send_json({"type": "start"})
+        message = websocket.receive_json()
+
+    assert message == {"type": "error", "message": "Speech transcription failed"}

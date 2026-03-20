@@ -14,6 +14,9 @@ class StubExtractor:
     def __init__(self, result: ResumeData | None = None):
         self.result = result or ResumeData()
 
+    def validate_resume_text_or_raise(self, text: str):
+        return None
+
     def extract_all(self, text: str):
         return self.result, 0.42
 
@@ -192,8 +195,11 @@ def test_parse_resume_maps_runtime_error_to_ocr_failed(monkeypatch):
 
     assert response.status_code == 502
     payload = response.json()
-    assert payload["detail"]["error"]["code"] == "OCR_FAILED"
-    assert "ocr backend unavailable" in payload["detail"]["error"]["message"]
+    assert payload["detail"]["error"] == {
+        "code": "OCR_FAILED",
+        "message": "Failed to parse document",
+    }
+    assert "ocr backend unavailable" not in response.text
 
 
 
@@ -214,15 +220,18 @@ def test_parse_resume_maps_runtime_error_to_llm_failed_without_ocr(monkeypatch):
 
     assert response.status_code == 502
     payload = response.json()
-    assert payload["detail"]["error"]["code"] == "LLM_FAILED"
-    assert "llm direct parsing failed" in payload["detail"]["error"]["message"]
+    assert payload["detail"]["error"] == {
+        "code": "LLM_FAILED",
+        "message": "Failed to extract resume data",
+    }
+    assert "llm direct parsing failed" not in response.text
 
 
 
 def test_parse_resume_windows_ocr_path_does_not_depend_on_libmagic(monkeypatch):
     monkeypatch.setattr(pdf_parser.platform, "system", lambda: "Windows")
     monkeypatch.setattr("app.api.routes.resume.ResumeExtractor.from_runtime_config", lambda runtime_config: StubExtractor())
-    monkeypatch.setattr("app.api.routes.resume.resolve_runtime_config", lambda runtime_config=None: RuntimeConfigStub(model="gpt-4o"))
+    monkeypatch.setattr("app.api.routes.resume.resolve_runtime_config", lambda runtime_config=None: RuntimeConfigStub(model="text-only-model"))
     monkeypatch.setattr("app.api.routes.resume.resolve_ocr_api_key", lambda runtime_ocr_api_key=None: "ocr-key")
 
     async def fake_call_ocr(file_bytes: bytes, api_key: str, file_extension: str):
@@ -243,6 +252,26 @@ def test_parse_resume_windows_ocr_path_does_not_depend_on_libmagic(monkeypatch):
     payload = response.json()
     assert payload["meta"]["extension"] == "pdf"
     assert payload["meta"]["elapsed"]["ocr_seconds"] == 0.5
+
+
+
+def test_parse_resume_sanitizes_unexpected_internal_errors(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.resume.resolve_runtime_config",
+        lambda runtime_config=None: (_ for _ in ()).throw(Exception("unexpected runtime config leak")),
+    )
+
+    response = client.post(
+        "/api/resume/parse",
+        files={"file": ("resume.txt", b"resume content", "text/plain")},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["error"] == {
+        "code": "INTERNAL_ERROR",
+        "message": "Internal server error",
+    }
+    assert "unexpected runtime config leak" not in response.text
 
 
 

@@ -22,6 +22,9 @@ class StubResumeExtractor:
         self.elapsed = elapsed
         self.texts: list[str] = []
 
+    def validate_resume_text_or_raise(self, text: str):
+        return None
+
     def extract_all(self, text: str):
         self.texts.append(text)
         return self.resume_data, self.elapsed
@@ -54,7 +57,7 @@ async def test_parse_resume_document_reads_txt_without_ocr(monkeypatch: pytest.M
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
     monkeypatch.setattr(pdf_parser, "call_ocr", fail_ocr)
 
@@ -82,7 +85,7 @@ async def test_parse_resume_document_reads_md_without_ocr(monkeypatch: pytest.Mo
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
     monkeypatch.setattr(pdf_parser, "call_ocr", fail_ocr)
 
@@ -115,7 +118,7 @@ async def test_parse_resume_document_reads_docx_as_text_without_ocr_or_file_dire
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
     extractor = StubResumeExtractor()
     monkeypatch.setattr(pdf_parser, "call_ocr", fail_ocr)
@@ -156,7 +159,7 @@ async def test_parse_resume_document_uses_ocr_when_configured(
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
 
     async def fake_prepare_binary(file_bytes: bytes, incoming_extension: str):
@@ -192,7 +195,7 @@ async def test_parse_resume_document_uses_normalized_extension_for_ocr(monkeypat
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
 
     async def fake_prepare_binary(file_bytes: bytes, incoming_extension: str):
@@ -226,7 +229,7 @@ async def test_parse_resume_document_rejects_doc_extension():
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
 
     with pytest.raises(ValueError, match="Unsupported file type: doc"):
@@ -244,7 +247,7 @@ async def test_parse_resume_document_rejects_unsupported_extension():
         model_provider="openai",
         api_key="key",
         base_url="https://example.com/v1",
-        model="gpt-4o-mini",
+        model="text-only-model",
     )
 
     with pytest.raises(ValueError, match="Unsupported file type: xlsx"):
@@ -358,8 +361,9 @@ async def test_resume_file_direct_extractor_uses_image_block_for_png(monkeypatch
     captured: dict[str, object] = {}
 
     def fake_invoke_with_fallback(structured_llm, messages, schema):
-        captured["messages"] = messages
-        captured["schema"] = schema
+        captured.setdefault("calls", []).append({"messages": messages, "schema": schema})
+        if schema is pdf_parser.ResumeValidityResponse:
+            return pdf_parser.ResumeValidityResponse(isResume="Yes")
         return ResumeData()
 
     monkeypatch.setattr(pdf_parser, "invoke_with_fallback", fake_invoke_with_fallback)
@@ -370,7 +374,10 @@ async def test_resume_file_direct_extractor_uses_image_block_for_png(monkeypatch
     assert calls["mime"] == (b"png-bytes", "png")
     assert result.data == ResumeData()
     assert result.llm_file_parsing_available is True
-    message = captured["messages"][1]
+    classify_call, extract_call = captured["calls"]
+    assert classify_call["schema"] is pdf_parser.ResumeValidityResponse
+    assert extract_call["schema"] is ResumeData
+    message = extract_call["messages"][1]
     assert message.content[0] == {
         "type": "image",
         "base64": "cG5nLWJ5dGVz",

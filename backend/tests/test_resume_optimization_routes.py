@@ -72,3 +72,51 @@ def test_resume_suggestions_route_returns_display_only_contract(monkeypatch):
     assert "suggestion_type" not in suggestion
     assert "field_path" not in suggestion["location"]
     assert "field_label" not in suggestion["location"]
+
+
+class FailingOptimizer:
+    async def get_overview(self, resume_data: ResumeData):
+        raise RuntimeError("provider returned raw stack details")
+
+    async def get_suggestions(self, resume_data: ResumeData):
+        raise RuntimeError("provider suggestions failure")
+
+
+def test_resume_overview_route_sanitizes_runtime_failures(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.resume_optimization.resolve_runtime_config",
+        lambda runtime_config=None: RuntimeConfigStub(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.resume_optimization.ResumeOptimizer.from_runtime_config",
+        lambda runtime_config: FailingOptimizer(),
+    )
+
+    response = client.post("/api/resume/overview", json=ResumeData().model_dump())
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["error"] == {
+        "code": "LLM_FAILED",
+        "message": "Failed to generate overview",
+    }
+    assert "provider returned raw stack details" not in response.text
+
+
+def test_resume_suggestions_route_sanitizes_runtime_failures(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.resume_optimization.resolve_runtime_config",
+        lambda runtime_config=None: RuntimeConfigStub(),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.resume_optimization.ResumeOptimizer.from_runtime_config",
+        lambda runtime_config: FailingOptimizer(),
+    )
+
+    response = client.post("/api/resume/suggestions", json=ResumeData().model_dump())
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["error"] == {
+        "code": "LLM_FAILED",
+        "message": "Failed to generate suggestions",
+    }
+    assert "provider suggestions failure" not in response.text

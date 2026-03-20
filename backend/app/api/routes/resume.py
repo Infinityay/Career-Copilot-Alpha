@@ -1,5 +1,7 @@
 """Resume parsing API routes."""
 
+import logging
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core.config import get_settings
@@ -15,6 +17,7 @@ from app.services.runtime_config import resolve_ocr_api_key, resolve_runtime_con
 router = APIRouter(prefix="/resume", tags=["resume"])
 
 SUPPORTED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "docx", "txt", "md"}
+logger = logging.getLogger(__name__)
 
 
 
@@ -152,19 +155,21 @@ async def parse_resume(
                 detail=_make_error("UNSUPPORTED_FILE_TYPE", str(exc)),
             ) from exc
         except RuntimeError as exc:
+            logger.exception("Resume parse failed")
             if ocr_api_key:
                 raise HTTPException(
                     status_code=502,
-                    detail=_make_error("OCR_FAILED", f"Failed to parse document: {str(exc)}"),
+                    detail=_make_error("OCR_FAILED", "Failed to parse document"),
                 ) from exc
             raise HTTPException(
                 status_code=502,
-                detail=_make_error("LLM_FAILED", f"Failed to extract resume data: {str(exc)}"),
+                detail=_make_error("LLM_FAILED", "Failed to extract resume data"),
             ) from exc
         except Exception as exc:
+            logger.exception("Resume extraction failed")
             raise HTTPException(
                 status_code=502,
-                detail=_make_error("LLM_FAILED", f"Failed to extract resume data: {str(exc)}"),
+                detail=_make_error("LLM_FAILED", "Failed to extract resume data"),
             ) from exc
 
         if parse_result.extraction_method != "llm_file_direct" and not parse_result.text.strip():
@@ -192,8 +197,9 @@ async def parse_resume(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Unexpected resume route failure")
         raise HTTPException(
             status_code=500,
-            detail=_make_error("INTERNAL_ERROR", str(exc)),
+            detail=_make_error("INTERNAL_ERROR", "Internal server error"),
         ) from exc
 
