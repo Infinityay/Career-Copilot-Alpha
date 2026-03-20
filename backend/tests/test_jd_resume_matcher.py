@@ -21,7 +21,7 @@ def test_flatten_resume_text_excludes_basic_info_skills():
         ],
         projects=[
             ProjectItem(
-                projectName="Career Copilot",
+                projectName="FaceTamato",
                 projectPeriod=ProjectPeriod(startDate="2024.02", endDate="2024.06"),
                 role="核心开发",
                 companyOrOrganization="个人项目",

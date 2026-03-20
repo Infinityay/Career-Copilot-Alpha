@@ -495,6 +495,9 @@ function renderPage(initialPath: string = "/interview") {
   );
 }
 
+const RECOVERABLE_SESSIONS_KEY = "face-tamato-mock-interview-recoverable-sessions";
+const LEGACY_RECOVERABLE_SESSIONS_KEY = RECOVERABLE_SESSIONS_KEY;
+
 const getLatestSpeechStatusUrl = () => {
   const speechCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/speech/status"));
   return speechCalls[speechCalls.length - 1]?.[0];
@@ -946,7 +949,7 @@ describe("MockInterviewPage", () => {
                 },
               },
             ],
-            [0, Promise.resolve(), 0, 0, 0, 80, 0, 0, 0]
+            [0, 20, 120, 0, 0, 80, 0, 0, 0]
           ),
           { status: 200, headers: { "Content-Type": "text/event-stream" } }
         )
@@ -990,7 +993,7 @@ describe("MockInterviewPage", () => {
               { event: "answer_analysis_started", data: { stage: "analyzing_answer", message: "正在分析你的回答" } },
               { event: "error", data: { message: "模拟面试请求失败", status: 500 } },
             ],
-            [0, Promise.resolve(), 0]
+            [0, 40, 120]
           ),
           { status: 200, headers: { "Content-Type": "text/event-stream" } }
         )
@@ -1055,7 +1058,7 @@ describe("MockInterviewPage", () => {
     expect(createObjectURL).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalled();
 
-    const snapshot = JSON.parse(localStorage.getItem("career-copilot-mock-interview-recoverable-sessions") ?? "[]")[0].snapshot;
+    const snapshot = JSON.parse(localStorage.getItem(RECOVERABLE_SESSIONS_KEY) ?? "[]")[0].snapshot;
     const markdown = buildMockInterviewTranscriptMarkdown(snapshot);
     expect(markdown).toContain("# 本轮面试基础信息");
     expect(markdown).toContain("- 面试岗位：前端开发");
@@ -1125,10 +1128,10 @@ describe("MockInterviewPage", () => {
     expect(screen.getByDisplayValue("这是一段还没发送的草稿")).toBeInTheDocument();
   });
 
-  it("restores canonical snapshot and clears legacy snapshot records", async () => {
+  it("restores canonical snapshot and clears invalid snapshot records", async () => {
     useResumeStore.setState({ parsedResume: mockResume, parseStatus: "success" });
     localStorage.setItem(
-      "career-copilot-mock-interview-recoverable-sessions",
+      RECOVERABLE_SESSIONS_KEY,
       JSON.stringify([
         {
           snapshot: {
@@ -1171,11 +1174,56 @@ describe("MockInterviewPage", () => {
 
     expect(await screen.findByText("第 2 / 4 轮")).toBeInTheDocument();
     expect(screen.getByText("当前主题 项目概述")).toBeInTheDocument();
-    const stored = JSON.parse(localStorage.getItem("career-copilot-mock-interview-recoverable-sessions") ?? "[]");
+    const stored = JSON.parse(localStorage.getItem(RECOVERABLE_SESSIONS_KEY) ?? "[]");
     expect(stored).toHaveLength(1);
     expect(stored[0].snapshot.sessionId).toBe("session-1");
     expect(stored[0].snapshot.snapshotVersion).toBe(3);
     expect(stored[0].snapshot.developerTrace).toEqual([]);
+  });
+
+  it("migrates recoverable sessions from legacy storage key", async () => {
+    useResumeStore.setState({ parsedResume: mockResume, parseStatus: "success" });
+    localStorage.setItem(
+      LEGACY_RECOVERABLE_SESSIONS_KEY,
+      JSON.stringify([
+        {
+          snapshot: {
+            snapshotVersion: 2,
+            sessionId: "session-legacy-key",
+            interviewType: "校招",
+            category: "前端开发",
+            status: "ready",
+            limits: defaultLimits,
+            jdText: "历史 JD 内容",
+            jdData: defaultJdData,
+            resumeSnapshot: mockResume,
+            retrieval: defaultRetrieval,
+            interviewPlan: defaultPlan,
+            interviewState: {
+              ...defaultState,
+              currentRound: 3,
+              turnCount: 2,
+            },
+            messages: [{ id: "assistant-1", role: "assistant", content: "继续说说性能优化。" }],
+            resumeFingerprint: "fp-legacy",
+            createdAt: "2026-03-16T10:00:00.000Z",
+            lastActiveAt: "2026-03-16T10:15:00.000Z",
+            expiresAt: "2099-03-16T12:00:00.000Z",
+            developerContext: null,
+            developerTrace: [],
+          },
+        },
+      ])
+    );
+
+    renderPage("/interview?session=session-legacy-key");
+
+    expect(await screen.findByText("第 3 / 4 轮")).toBeInTheDocument();
+    const migrated = JSON.parse(localStorage.getItem(RECOVERABLE_SESSIONS_KEY) ?? "[]");
+    expect(migrated).toHaveLength(1);
+    expect(migrated[0].snapshot.sessionId).toBe("session-legacy-key");
+    expect(migrated[0].snapshot.snapshotVersion).toBe(3);
+    expect(JSON.parse(localStorage.getItem(LEGACY_RECOVERABLE_SESSIONS_KEY) ?? "[]")).toHaveLength(1);
   });
 
   it("clears draft when restarting", async () => {

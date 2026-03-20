@@ -1,1 +1,1 @@
-"""Career-Copilot Backend Application."""
+"""FaceTamato Backend Application."""

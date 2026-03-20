@@ -1,6 +1,6 @@
 # Backend Docs
 
-这里集中存放 Career-Copilot 后端相关的配置文档。
+这里集中存放 FaceTamato（面柿）后端相关的配置文档。
 
 ## 文档索引
 

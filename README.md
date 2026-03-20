@@ -1,14 +1,14 @@
-# FaceTomato
+# FaceTamato
 
 <div align="center">
 
-### FaceTomato · AI 辅助简历分析与模拟面试系统
+### FaceTamato · AI 辅助简历分析与模拟面试系统
 
-[![GitHub stars](https://img.shields.io/github/stars/Infinityay/Career-Copilot-Alpha?style=flat-square)](https://github.com/Infinityay/Career-Copilot-Alpha/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/Infinityay/FaceTamato?style=flat-square)](https://github.com/Infinityay/FaceTamato/stargazers)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2B%20TypeScript-blue?style=flat-square)]()
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20LangChain-green?style=flat-square)]()
 [![Storage](https://img.shields.io/badge/Storage-SQLite%20%2B%20Local%20Index-orange?style=flat-square)]()
-[![License](https://img.shields.io/github/license/Infinityay/Career-Copilot-Alpha?style=flat-square)](https://github.com/Infinityay/Career-Copilot-Alpha/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/Infinityay/FaceTamato?style=flat-square)](https://github.com/Infinityay/FaceTamato/blob/main/LICENSE)
 
 
 </div>
@@ -17,7 +17,7 @@
 
 ## ✨ 项目概述
 
-**FaceTomato** 是一个面向求职场景的 AI 助手，覆盖从材料准备到面试演练的完整流程，帮助用户更高效地完成：
+**FaceTamato** 是一个面向求职场景的 AI 助手，覆盖从材料准备到面试演练的完整流程，帮助用户更高效地完成：
 
 - 简历解析
 - JD 匹配分析
@@ -28,8 +28,8 @@
 
 用户可以从一份简历或一个岗位描述开始，让系统自动完成结构提取、能力匹配、改写建议与模拟问答，逐步搭建一套更完整的求职准备链路。
 
-> FaceTomato 以 Tomato（番茄）为视觉与品牌意象，象征一种轻量但高价值、低门槛但强辅助的产品能力。
-> 我们希望 FaceTomato 成为求职过程中的那个关键助攻：
+> FaceTamato 以 Tomato（番茄）为视觉与品牌意象，象征一种轻量但高价值、低门槛但强辅助的产品能力。
+> 我们希望 FaceTamato 成为求职过程中的那个关键助攻：
 > **🍅 “平凡外表下的高效赋能，助你在关键时刻稳定发挥”**
 
 ## 🚀 核心能力
@@ -96,9 +96,9 @@
 - 训练表达流畅度
 - 提升临场回答状态
 
-## 🌟 为什么使用 FaceTomato
+## 🌟 为什么使用 FaceTamato
 
-相比单点式的简历工具或面试工具，FaceTomato 更强调求职准备链路的一体化：
+相比单点式的简历工具或面试工具，FaceTamato 更强调求职准备链路的一体化：
 
 1. **从输入材料到输出建议的一站式流程**  
    从上传简历、解析结构，到 JD 匹配、简历优化、题库检索、模拟面试，形成完整闭环。
@@ -111,7 +111,7 @@
 
 ## 🏗️ 系统组成
 
-FaceTomato 由前端应用、后端服务、本地数据存储与检索模块构成。
+FaceTamato 由前端应用、后端服务、本地数据存储与检索模块构成。
 
 - **Frontend**
   负责简历上传、JD 输入、分析结果展示、面试对话、语音输入等交互体验。
@@ -244,7 +244,7 @@ uv run python scripts/build_interview_zvec_index.py
 ## 📁 项目结构
 
 ```text
-Career-Copilot/
+FaceTamato/
 ├── frontend/                    # 前端应用
 │   ├── src/                     # 页面、组件、状态管理与接口封装
 │   ├── package.json

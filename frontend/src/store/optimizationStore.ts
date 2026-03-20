@@ -1,6 +1,11 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import type { JDData } from "../lib/api";
+
+import { createMigratingJSONStorage, legacyStorageKey } from "./persistStorage";
+
+const STORAGE_KEY = "face-tamato-optimization";
+const LEGACY_STORAGE_KEYS = [legacyStorageKey("optimization")];
 
 // ==================== Types ====================
 
@@ -226,8 +231,8 @@ export const useOptimizationStore = create<OptimizationStore>()(
         }),
     }),
     {
-      name: "career-copilot-optimization",
-      storage: createJSONStorage(() => sessionStorage),
+      name: STORAGE_KEY,
+      storage: createMigratingJSONStorage("session", STORAGE_KEY, LEGACY_STORAGE_KEYS),
       partialize: (state) => ({
         status: state.status,
         jdText: state.jdText,

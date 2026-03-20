@@ -14,7 +14,7 @@
 
 ## 模块职责
 
-`frontend/` 是 Career-Copilot 的 React 单页应用，负责四类核心交互：
+`frontend/` 是 FaceTamato（面柿）的 React 单页应用，负责四类核心交互：
 
 - 简历上传、PDF/图片预览与结构化结果编辑
 - JD 输入、匹配分析、优化建议展示
@@ -80,7 +80,7 @@
 ### 配置来源与持久化
 
 - Store：`src/store/runtimeSettingsStore.ts`
-- 持久化 key：`career-copilot-runtime-settings`
+- 持久化 key：`face-tamato-runtime-settings`
 - 字段：
   - `apiKey` / `baseURL` / `model`
   - `ocrApiKey`
@@ -154,7 +154,7 @@
 
 ### 本地恢复
 
-- 本地 key：`career-copilot-mock-interview-recoverable-sessions`
+- 本地 key：`face-tamato-mock-interview-recoverable-sessions`
 - 快照结构：`MockInterviewSessionSnapshot`（v3）
 - 支持历史恢复入口：`/interview?session=<sessionId>`
 - 会话列表入口：`App.tsx` 侧边栏 “模拟面试” 历史下拉

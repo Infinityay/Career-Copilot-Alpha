@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
 import type { RuntimeConfig } from "@/lib/api";
+import { createMigratingJSONStorage, legacyStorageKey } from "./persistStorage";
 
 interface RuntimeSettingsState extends RuntimeConfig {
   setModelProvider: (modelProvider: RuntimeConfig['modelProvider']) => void;
@@ -14,6 +15,9 @@ interface RuntimeSettingsState extends RuntimeConfig {
   setRuntimeConfig: (config: RuntimeConfig) => void;
   clearRuntimeConfig: () => void;
 }
+
+const STORAGE_KEY = "face-tamato-runtime-settings";
+const LEGACY_STORAGE_KEYS = [legacyStorageKey("runtime", "settings")];
 
 const initialState: RuntimeConfig = {
   modelProvider: "",
@@ -49,8 +53,8 @@ export const useRuntimeSettingsStore = create<RuntimeSettingsState>()(
       clearRuntimeConfig: () => set(initialState),
     }),
     {
-      name: "career-copilot-runtime-settings",
-      storage: createJSONStorage(() => localStorage),
+      name: STORAGE_KEY,
+      storage: createMigratingJSONStorage("local", STORAGE_KEY, LEGACY_STORAGE_KEYS),
     }
   )
 );

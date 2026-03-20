@@ -1,7 +1,7 @@
 [project]
-name = "career-copilot-backend"
+name = "face-tamato-backend"
 version = "0.1.0"
-description = "Career-Copilot Backend - Resume Parser API"
+description = "FaceTamato Backend - Resume Parser API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi[standard]>=0.115.0",

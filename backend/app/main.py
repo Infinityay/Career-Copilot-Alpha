@@ -1,4 +1,4 @@
-"""Career-Copilot Backend API."""
+"""FaceTamato Backend API."""
 
 from contextlib import asynccontextmanager
 
@@ -21,14 +21,14 @@ from app.core.config import get_settings
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
-    print(f"🚀 Career-Copilot Backend starting on {settings.app_host}:{settings.app_port}")
+    print(f"🚀 FaceTamato Backend starting on {settings.app_host}:{settings.app_port}")
     print(f"   📝 CORS origins: {settings.get_cors_origins()}")
     yield
-    print("👋 Career-Copilot Backend shutting down")
+    print("👋 FaceTamato Backend shutting down")
 
 
 app = FastAPI(
-    title="Career-Copilot API",
+    title="FaceTamato API",
     description="Resume parsing and career assistance API",
     version="0.1.0",
     lifespan=lifespan,
@@ -64,7 +64,7 @@ async def health_check():
 async def root():
     """Root endpoint."""
     return {
-        "name": "Career-Copilot API",
+        "name": "FaceTamato API",
         "version": "0.1.0",
         "docs": "/docs",
     }

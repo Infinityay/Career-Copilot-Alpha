@@ -2,7 +2,7 @@ services:
   backend:
     build:
       context: ./backend
-    container_name: career-copilot-backend
+    container_name: face-tamato-backend
     env_file:
       - ./backend/.env
     ports:
@@ -15,7 +15,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    container_name: career-copilot-frontend
+    container_name: face-tamato-frontend
     depends_on:
       - backend
     ports:

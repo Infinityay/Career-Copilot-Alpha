@@ -3,10 +3,13 @@ import type {
   MockInterviewPendingSession,
   MockInterviewSessionSnapshot,
 } from "@/types/mockInterview";
+import { legacyStorageKey, readStorageWithLegacyFallback } from "@/store/persistStorage";
 
-const STORAGE_KEY = "career-copilot-mock-interview-recoverable-sessions";
-const PENDING_STORAGE_KEY = "career-copilot-mock-interview-pending-sessions";
-export const MOCK_INTERVIEW_RECOVERY_EVENT = "career-copilot:mock-interview-recovery-changed";
+const STORAGE_KEY = "face-tamato-mock-interview-recoverable-sessions";
+const LEGACY_STORAGE_KEYS = [legacyStorageKey("mock", "interview", "recoverable", "sessions")];
+const PENDING_STORAGE_KEY = "face-tamato-mock-interview-pending-sessions";
+const LEGACY_PENDING_STORAGE_KEYS = [legacyStorageKey("mock", "interview", "pending", "sessions")];
+export const MOCK_INTERVIEW_RECOVERY_EVENT = "face-tamato:mock-interview-recovery-changed";
 
 export interface RecoverableSessionRecord {
   snapshot: MockInterviewSessionSnapshot;
@@ -77,7 +80,7 @@ function upgradeSnapshot(snapshot: LegacySnapshotV2 | MockInterviewSessionSnapsh
 
 function readRecords(): RecoverableSessionRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = readStorageWithLegacyFallback("local", STORAGE_KEY, LEGACY_STORAGE_KEYS);
     if (!raw) {
       return [];
     }
@@ -102,7 +105,7 @@ function writeRecords(records: RecoverableSessionRecord[]) {
 
 function readPendingRecords(): PendingSessionRecord[] {
   try {
-    const raw = localStorage.getItem(PENDING_STORAGE_KEY);
+    const raw = readStorageWithLegacyFallback("local", PENDING_STORAGE_KEY, LEGACY_PENDING_STORAGE_KEYS);
     if (!raw) {
       return [];
     }
@@ -175,7 +178,7 @@ export function clearRecoverableSessions() {
 }
 
 export function clearLegacyRecoverableSessions() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = readStorageWithLegacyFallback("local", STORAGE_KEY, LEGACY_STORAGE_KEYS);
   if (!raw) {
     return false;
   }

@@ -605,7 +605,7 @@ const Sidebar = ({ mobile = false, onNavigate, onClose, onOpenRuntimeSettings }:
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <FileText className="h-4 w-4" />
           </div>
-          <span className="text-base font-semibold">Career Copilot</span>
+          <span className="text-base font-semibold">FaceTamato 面柿</span>
         </div>
 
         {mobile && onClose && (
@@ -892,7 +892,7 @@ const App = () => {
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <FileText className="h-4 w-4" />
               </div>
-              <span className="text-base font-semibold">Career Copilot</span>
+              <span className="text-base font-semibold">FaceTamato 面柿</span>
             </div>
 
             <div className="flex items-center gap-2">

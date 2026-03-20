@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import { produce } from "immer";
+import { createMigratingJSONStorage, legacyStorageKey } from "./persistStorage";
 import type {
   MockInterviewCreatingStep,
   MockInterviewDeveloperContext,
@@ -16,6 +17,9 @@ import type {
   ReflectionResult,
 } from "@/types/mockInterview";
 import type { Category, InterviewType } from "@/types/interview";
+
+const STORAGE_KEY = "face-tamato-mock-interview";
+const LEGACY_STORAGE_KEYS = [legacyStorageKey("mock", "interview")];
 
 interface MockInterviewStore {
   sessionId: string | null;
@@ -264,8 +268,8 @@ export const useMockInterviewStore = create<MockInterviewStore>()(
       resetSession: () => set({ ...initialState }),
     }),
     {
-      name: "career-copilot-mock-interview",
-      storage: createJSONStorage(() => localStorage),
+      name: STORAGE_KEY,
+      storage: createMigratingJSONStorage("local", STORAGE_KEY, LEGACY_STORAGE_KEYS),
       partialize: (state) => ({
         sessionId: state.sessionId,
         resumeFingerprint: state.resumeFingerprint,

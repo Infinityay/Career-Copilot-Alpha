@@ -108,61 +108,6 @@ wheels = [
 ]
 
 [[package]]
-name = "career-copilot-backend"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "dashscope" },
-    { name = "fastapi", extra = ["standard"] },
-    { name = "httpx" },
-    { name = "langchain" },
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "modelscope" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-dotenv" },
-    { name = "python-magic" },
-    { name = "python-multipart" },
-    { name = "sentence-transformers" },
-    { name = "uvicorn" },
-    { name = "zai-sdk" },
-    { name = "zvec", marker = "sys_platform != 'win32'" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dashscope", specifier = ">=1.20.0" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "langchain", specifier = ">=0.3.0" },
-    { name = "langchain-core", specifier = ">=0.3.0" },
-    { name = "langchain-mcp-adapters", specifier = ">=0.1.0" },
-    { name = "langchain-openai", specifier = ">=0.2.0" },
-    { name = "modelscope", specifier = ">=1.23.0" },
-    { name = "openai", specifier = ">=1.68.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "sentence-transformers", specifier = ">=3.0.0" },
-    { name = "uvicorn", specifier = ">=0.30.0" },
-    { name = "zai-sdk", specifier = ">=0.2.2" },
-    { name = "zvec", marker = "sys_platform != 'win32'", specifier = "==0.2.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.3.0" }]
-
-[[package]]
 name = "certifi"
 version = "2026.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -343,6 +288,61 @@ sdist = { url = "https://files.pythonhosted.org/packages/f5/22/900cb125c76b7aaa4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/15/545e2b6cf2e3be84bc1ed85613edd75b8aea69807a71c26f4ca6a9258e82/email_validator-2.3.0-py3-none-any.whl", hash = "sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4", size = 35604, upload-time = "2025-08-26T13:09:05.858Z" },
 ]
+
+[[package]]
+name = "face-tamato-backend"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "dashscope" },
+    { name = "fastapi", extra = ["standard"] },
+    { name = "httpx" },
+    { name = "langchain" },
+    { name = "langchain-core" },
+    { name = "langchain-mcp-adapters" },
+    { name = "langchain-openai" },
+    { name = "modelscope" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "python-magic" },
+    { name = "python-multipart" },
+    { name = "sentence-transformers" },
+    { name = "uvicorn" },
+    { name = "zai-sdk" },
+    { name = "zvec", marker = "sys_platform != 'win32'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dashscope", specifier = ">=1.20.0" },
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "langchain", specifier = ">=0.3.0" },
+    { name = "langchain-core", specifier = ">=0.3.0" },
+    { name = "langchain-mcp-adapters", specifier = ">=0.1.0" },
+    { name = "langchain-openai", specifier = ">=0.2.0" },
+    { name = "modelscope", specifier = ">=1.23.0" },
+    { name = "openai", specifier = ">=1.68.0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "sentence-transformers", specifier = ">=3.0.0" },
+    { name = "uvicorn", specifier = ">=0.30.0" },
+    { name = "zai-sdk", specifier = ">=0.2.2" },
+    { name = "zvec", marker = "sys_platform != 'win32'", specifier = "==0.2.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.3.0" }]
 
 [[package]]
 name = "fastapi"

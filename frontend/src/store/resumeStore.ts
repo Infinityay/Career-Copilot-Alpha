@@ -1,6 +1,8 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import { produce } from "immer";
+
+import { createMigratingJSONStorage, legacyStorageKey } from "./persistStorage";
 
 import { analyzeResume, ApiError } from "../lib/api";
 import { useRuntimeSettingsStore } from "./runtimeSettingsStore";
@@ -13,6 +15,9 @@ import type {
   BasicInfo,
   AcademicAchievementItem,
 } from "../types/resume";
+
+const STORAGE_KEY = "face-tamato-resume";
+const LEGACY_STORAGE_KEYS = [legacyStorageKey("resume")];
 
 export type ParseStatus = "idle" | "parsing" | "success" | "error";
 
@@ -149,8 +154,8 @@ export const useResumeStore = create<ResumeStore>()(
         ),
     }),
     {
-      name: "career-copilot-resume",
-      storage: createJSONStorage(() => sessionStorage),
+      name: STORAGE_KEY,
+      storage: createMigratingJSONStorage("session", STORAGE_KEY, LEGACY_STORAGE_KEYS),
       partialize: (state) => ({
         parsedResume: state.parsedResume,
         parseMeta: state.parseMeta,

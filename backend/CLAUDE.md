@@ -15,7 +15,7 @@
 
 ## 模块职责
 
-`backend/` 是 Career-Copilot 的 FastAPI 服务端，负责：
+`backend/` 是 FaceTamato（面柿）的 FastAPI 服务端，负责：
 
 - 简历文件解析与结构化抽取
 - JD 文本抽取、简历概览与 JD 定向优化
