@@ -6,6 +6,7 @@
 
 | 时间 | 操作 | 说明 |
 |------|------|------|
+| 2026-03-20 | 增量扫描 | 更新 backend 安装层：RAG 改为 `rag` 可选依赖，并补充 import-safe RAG 边界、mock interview 自动回退、索引脚本前置条件与默认/可选安装区分 |
 | 2026-03-18 | 增量扫描 | 从“RAG 专题”升级为完整后端说明：补齐真实路由面、runtime config 合并、speech 转写、mock interview SSE/trace/timeout 与 RAG/non-RAG fallback、完整测试清单 |
 | 2026-03-17 | 增量扫描 | 收缩 interview RAG embedding provider 为纯本地矩阵，保留 dense document/query 拆分与重建规则 |
 | 2026-03-13 09:34:09 | 增量扫描 | 补充 mock interview、RAG 检索、匿名恢复与当前真实路由清单 |
@@ -29,6 +30,8 @@
 - 应用入口：`app/main.py`
 - 配置中心：`app/core/config.py`
 - 启动命令：`uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 6522`
+- 默认安装：`uv sync`
+- RAG 可选安装：`uv sync --extra rag`
 - API 文档：`http://127.0.0.1:6522/docs`
 - 健康检查：`GET /health`
 
@@ -138,11 +141,17 @@
 
 ### RAG / Non-RAG 行为
 
-- 关闭条件：
-  - `MOCK_INTERVIEW_RAG=false`，或
+- 安装层：
+  - 默认 `uv sync` 不安装 RAG 依赖
+  - 需要本地 RAG / 索引能力时使用 `uv sync --extra rag`
+- 运行时关闭或回退条件：
+  - `MOCK_INTERVIEW_RAG=false`
+  - 未安装 `rag` 可选依赖
   - `zvec` 子进程探测 import 失败
+  - 当前 dense/sparse provider 所需的 `sentence-transformers` / `modelscope` 等依赖不可用
 - 关闭后使用 non-RAG 检索：基于 SQLite 的 tiered filter 回退（公司+类型+类别 -> 类型+类别 -> 仅类别）
 - 开启时使用 `InterviewRagService.retrieve_for_plan`
+- `developerContext.ragEnabled` 会反映最终是否真的启用了 RAG，而不是只看 env 开关
 
 ## Speech 转写链路
 
@@ -176,6 +185,13 @@
 - `app/services/interview_embedding_service.py`
 - `app/services/interview_rag_service.py`
 - `scripts/build_interview_zvec_index.py`
+
+### 安装与导入边界
+
+- `backend/pyproject.toml` 将 `modelscope`、`sentence-transformers`、`zvec` 放在 `rag` 可选依赖组
+- `interview_embedding_service.py` 与 `interview_rag_service.py` 为 import-safe：默认安装环境下模块可导入
+- 只有真正进入 RAG builder / RAG service / index 构建路径时，才会显式校验依赖并报错
+- RAG-only 错误会提示先安装 backend 的 `rag` 可选依赖
 
 ### Provider 矩阵（当前限制）
 
@@ -240,7 +256,7 @@
 A: 当前 `/stream` 路径按请求体重建临时会话，恢复主路径在前端本地快照。
 
 **Q: 为何开启了 RAG 仍可能退化？**
-A: 若 `zvec` 导入探测失败，服务会自动切到 non-RAG，避免流程不可用。
+A: `MOCK_INTERVIEW_RAG=true` 只是运行时意图；如果没安装 `uv sync --extra rag`，或 `zvec` / `sentence-transformers` / `modelscope` 等当前组合所需依赖不可用，服务仍会自动切到 non-RAG，避免流程不可用。
 
 **Q: 计划生成卡住怎么排查？**
 A: 先检查 `MOCK_INTERVIEW_PLAN_TIMEOUT_SECONDS`、模型配置与上游模型服务状态；超时会返回 504。

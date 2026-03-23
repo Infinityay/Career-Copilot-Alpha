@@ -6,7 +6,8 @@
 
 | 时间 | 操作 | 说明 |
 |------|------|------|
-| 2026-03-18 | 增量扫描 | 同步到当前实现：补充 runtime settings、speech 输入链路、mock interview snapshot v3 / developer trace / transcript 导出、扩展测试清单与 API 依赖 |
+| 2026-03-23 | 增量扫描 | 前端本地持久化执行 cutoff：仅保留 `face-tomato-*` canonical key，移除旧品牌 key 兼容与 mock interview snapshot 版本升级描述 |
+| 2026-03-18 | 增量扫描 | 同步到当前实现：补充 runtime settings、speech 输入链路、mock interview developer trace / transcript 导出、扩展测试清单与 API 依赖 |
 | 2026-03-13 09:34:09 | 增量扫描 | 补充 mock interview、Vitest 测试、状态持久化与匿名恢复说明 |
 | 2026-03-04 16:22:25 | 初始化 | 首次生成模块文档 |
 
@@ -80,7 +81,8 @@
 ### 配置来源与持久化
 
 - Store：`src/store/runtimeSettingsStore.ts`
-- 持久化 key：`face-tamato-runtime-settings`
+- 持久化 key：`face-tomato-runtime-settings`
+- 当前仅识别 canonical `face-tomato-*` key；不再自动迁移 `face-tamato-*` 或 `career-copilot-*` 历史 key
 - 字段：
   - `apiKey` / `baseURL` / `model`
   - `ocrApiKey`
@@ -119,7 +121,7 @@
 - 模拟面试类型：`src/types/mockInterview.ts`
 - 关键结构：
   - `MockInterviewSessionResponse`
-  - `MockInterviewSessionSnapshot`（当前 `snapshotVersion: 3`）
+  - `MockInterviewSessionSnapshot`（当前单一快照结构，无版本字段）
   - `MockInterviewDeveloperContext` / `MockInterviewDeveloperTraceEvent`
   - `MockInterviewRetrievalResult`
   - `MockInterviewPlan` / `MockInterviewState`
@@ -134,7 +136,7 @@
 | questionBankStore | `src/store/questionBankStore.ts` | 题库筛选、分页、详情与邻近导航 |
 | runtimeSettingsStore | `src/store/runtimeSettingsStore.ts` | 请求级 runtime 覆盖配置 |
 | mockInterviewStore | `src/store/mockInterviewStore.ts` | 模拟面试会话、消息流、阶段、developer context/trace |
-| mockInterviewRecovery | `src/lib/mockInterviewRecovery.ts` | `localStorage` 可恢复会话快照（v2->v3 升级、过期过滤、最近记录） |
+| mockInterviewRecovery | `src/lib/mockInterviewRecovery.ts` | `localStorage` 可恢复会话快照（仅 canonical key、按当前结构校验、过期过滤、最近记录） |
 | useSpeechInput | `src/store/useSpeechInput.ts` | 麦克风采集、PCM 编码、WS 推流与 partial/final 回填 |
 
 ## 模拟面试（当前实现）
@@ -154,8 +156,8 @@
 
 ### 本地恢复
 
-- 本地 key：`face-tamato-mock-interview-recoverable-sessions`
-- 快照结构：`MockInterviewSessionSnapshot`（v3）
+- 本地 key：`face-tomato-mock-interview-recoverable-sessions`
+- 快照结构：`MockInterviewSessionSnapshot`（单一当前结构，不再包含 `snapshotVersion`）
 - 支持历史恢复入口：`/interview?session=<sessionId>`
 - 会话列表入口：`App.tsx` 侧边栏 “模拟面试” 历史下拉
 

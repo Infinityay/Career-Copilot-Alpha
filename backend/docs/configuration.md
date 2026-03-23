@@ -16,6 +16,18 @@ cd backend
 cp .env.example .env
 ```
 
+安装方式分两种：
+
+```bash
+# 默认安装：不包含本地 RAG 大依赖
+cd backend
+uv sync
+
+# 需要本地 RAG / 索引能力时再显式安装
+cd backend
+uv sync --extra rag
+```
+
 ---
 
 ## 先记住这 6 条规则
@@ -28,7 +40,8 @@ cp .env.example .env
 3. **未使用的提供商配置请直接注释掉**，不要保留 `your-xxx-api-key` 这种占位值。
 4. 语音识别不是必需功能；如果不用，**整段 `VOLCENGINE_SPEECH_*` 都可以注释掉**。
 5. OCR 不是必需功能；如果不用图片 OCR，`ZHIPU_APIKEY` 可以注释掉。
-6. `API_KEY` / `BASE_URL` / `MODEL` 是**旧兼容字段**，默认不要填；除非你明确要走旧配置逻辑，否则请注释掉。
+6. RAG 依赖默认不安装；只有在启用 mock interview RAG、构建索引或运行 RAG-only 测试时，才需要执行 `uv sync --extra rag`。
+7. `API_KEY` / `BASE_URL` / `MODEL` 是**旧兼容字段**，默认不要填；除非你明确要走旧配置逻辑，否则请注释掉。
 
 ---
 
@@ -261,6 +274,16 @@ GOOGLE_MODEL=gemini-2.0-flash
 
 ### 7. 模拟面试 RAG 配置
 
+先区分两个层面：
+
+1. **安装层**：是否执行了 `uv sync --extra rag`
+2. **运行时层**：是否设置 `MOCK_INTERVIEW_RAG=true`
+
+这两层不是一回事：
+
+- `MOCK_INTERVIEW_RAG=false` = 你主动在运行时关闭 RAG
+- 没有安装 `rag` 可选依赖 = 运行环境根本不具备本地 RAG 能力
+
 对于轻量部署，建议先关闭：
 
 ```env
@@ -277,7 +300,8 @@ MOCK_INTERVIEW_RAG=false
 
 **建议：**
 - 只想快速跑起来：`MOCK_INTERVIEW_RAG=false`
-- 需要更强的 mock interview 检索增强时，再启用并准备好本地索引
+- 需要更强的 mock interview 检索增强时，再执行 `uv sync --extra rag`、构建本地索引，并开启 `MOCK_INTERVIEW_RAG=true`
+- 即使你写了 `MOCK_INTERVIEW_RAG=true`，如果当前依赖不可用，后端也会自动回退到 non-RAG
 
 ---
 
@@ -299,10 +323,11 @@ MOCK_INTERVIEW_RAG=false
 - 不熟悉 embedding 的情况下，不要改这组。
 - 如果你修改了索引侧 embedding 配置，需要重建索引。
 
-建立 / 重建面经索引：
+建立 / 重建面经索引前，先安装 `rag` 可选依赖：
 
 ```bash
 cd backend
+uv sync --extra rag
 uv run python scripts/build_interview_zvec_index.py
 ```
 

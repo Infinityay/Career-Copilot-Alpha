@@ -2,6 +2,8 @@
 
 本文档说明 `backend/` 下 mock interview / 面经检索使用的本地 RAG embedding 配置。
 
+> 前提：本页的能力都属于 backend 的 **`rag` 可选依赖**。默认 `uv sync` 不会安装这些依赖；启用前请先执行 `uv sync --extra rag`。当前依赖组合中的 `zvec` 仍限制为非 Windows 平台，因此 Windows 默认只能使用 non-RAG / 回退路径。
+
 ---
 
 ## 1. 推荐默认方案
@@ -20,18 +22,30 @@ INTERVIEW_SPARSE_EMBEDDING_PROVIDER=bm25
 
 ---
 
-## 2. RAG 总开关
+## 2. 安装层 vs 运行时开关
+
+先区分两个概念：
+
+- **安装层**：`uv sync --extra rag` 是否执行过
+- **运行时层**：`MOCK_INTERVIEW_RAG` 是否开启
+
+这两者缺一不可：
+
+- 没有安装 `rag` 可选依赖：RAG builder、RAG service、索引脚本都会显式报错或自动回退
+- 安装了 `rag` 可选依赖但 `MOCK_INTERVIEW_RAG=false`：运行时仍然走 non-RAG
 
 ### `MOCK_INTERVIEW_RAG`
 
 是否开启 mock interview 的 RAG 检索。
 
 - `true`：开启 RAG
-- `false`：关闭 RAG，只走 LLM 生成，不检索面经证据
+- `false`：关闭 ZVEC-based RAG，mock interview 改走 SQLite non-RAG fallback 检索
 
 ```env
 MOCK_INTERVIEW_RAG=true
 ```
+
+如果只改这个开关、但没有安装 `uv sync --extra rag`，mock interview 会把 `ragEnabled` 标成 `false`，并自动退回 SQLite non-RAG 检索。
 
 ---
 
@@ -264,6 +278,7 @@ INTERVIEW_SPARSE_EMBEDDING_MODEL_SOURCE=huggingface
 
 ```bash
 cd backend
+uv sync --extra rag
 uv run python scripts/build_interview_zvec_index.py
 ```
 
@@ -275,14 +290,19 @@ uv run python scripts/build_interview_zvec_index.py
 
 通常不需要。`ensure_index()` 只比较 index-side embedding metadata。
 
-### Q2. 本地 provider 第一次很慢，正常吗？
+### Q2. 为什么我已经把 `MOCK_INTERVIEW_RAG=true`，却还是看到 non-RAG？
+
+因为运行时开关不等于安装层能力。若未执行 `uv sync --extra rag`，或当前 provider 依赖的 `zvec` / `sentence-transformers` / `modelscope` 不可用，服务会自动回退，并让 `developerContext.ragEnabled=false`。
+
+### Q3. 本地 provider 第一次很慢，正常吗？
 
 正常。首次使用本地模型可能下载权重，并且会占用较多内存。
 
-### Q3. 当前最推荐什么？
+### Q4. 当前最推荐什么？
 
 `local_hf_qwen3 + bm25`。
 
-### Q4. 当前项目支持多模态 embedding 吗？
+### Q5. 当前项目支持多模态 embedding 吗？
 
 不支持，当前只面向文本检索。
+

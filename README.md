@@ -6,7 +6,7 @@
 
 <img src="./assets/facetomato_new.jpg" alt="FaceTomato preview" width="880" />
 
-[![GitHub stars](https://img.shields.io/github/stars/Infinityay/FaceTomato?style=flat-square)](https://github.com/Infinityay/FaceTamato/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/Infinityay/FaceTomato?style=flat-square)](https://github.com/Infinityay/FaceTomato/stargazers)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2B%20TypeScript-blue?style=flat-square)]()
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20LangChain-green?style=flat-square)]()
 [![Storage](https://img.shields.io/badge/Storage-SQLite%20%2B%20Local%20Index-orange?style=flat-square)]()
@@ -164,6 +164,15 @@ uv sync
 cp .env.example .env
 ```
 
+默认安装路径不会拉取 RAG 大依赖；它适合简历解析、JD 分析、题库浏览，以及 mock interview 的 non-RAG / 自动回退模式。
+
+如果你要显式启用本地 RAG 检索或构建索引，再额外安装 `rag` 可选依赖（当前依赖组合面向非 Windows 平台）：
+
+```bash
+cd backend
+uv sync --extra rag
+```
+
 根据实际配置补全 `backend/.env` 后，运行后端服务：
 
 ```bash
@@ -199,8 +208,11 @@ cp backend/.env.example backend/.env
 然后在项目根目录执行：
 
 ```bash
-docker compose up --build
+docker compose up --build -d 
 ```
+
+当前仓库自带的 Docker backend 镜像按默认依赖构建，不包含 `rag` 可选依赖；因此 Docker 路径默认适用于 non-RAG 模式。
+如果你要在容器里启用本地 RAG，需要额外调整 backend 镜像安装步骤，使其安装 `.[rag]` 或等价的 `uv sync --extra rag`。
 
 启动后默认访问地址：
 
@@ -213,9 +225,10 @@ docker compose up --build
 当前仓库中与配置和检索能力相关的说明主要包括：
 
 - `backend/.env.example`：后端环境变量示例
-- `backend/RAG_CONFIG.md`：面经检索与 RAG 相关配置说明
+- `backend/docs/configuration.md`：后端安装与配置说明
+- `backend/docs/rag-config.md`：面经检索与 RAG 相关配置说明
 
-如需启用本地索引检索能力，可进一步参考 `backend/RAG_CONFIG.md`。
+如需启用本地索引检索能力，可进一步参考 `backend/docs/rag-config.md`。
 
 ## 🛠️ Runtime Settings
 
@@ -230,16 +243,19 @@ docker compose up --build
 ## 🧪 模拟面试当前行为
 
 - 前端本地持久化会话快照，用于页面刷新后的恢复
+- 前端当前仅识别 canonical `face-tomato-*` 存储 key；不会再迁移旧品牌 key，mock interview 快照也只接受当前结构
 - 后端在每次 `/stream` 请求时按请求体重建临时会话态
 - 创建与对话过程中会返回 developer trace 事件
-- 当 `MOCK_INTERVIEW_RAG=false` 或 `zvec` 不可用时，会自动回退到非 RAG 模式
+- `MOCK_INTERVIEW_RAG=false` 表示运行时主动关闭 RAG
+- 即使 `MOCK_INTERVIEW_RAG=true`，如果未安装 `rag` 可选依赖或运行时依赖不可用，后端也会自动回退到 non-RAG 模式，并让 `developerContext.ragEnabled=false`
 
 ## 🗂️ 面经索引构建
 
-如需建立面经索引，可执行：
+建立面经索引前，先安装 `rag` 可选依赖：
 
 ```bash
 cd backend
+uv sync --extra rag
 uv run python scripts/build_interview_zvec_index.py
 ```
 
@@ -257,8 +273,9 @@ FaceTomato/
 │   ├── scripts/                 # 索引构建与数据迁移脚本
 │   ├── tests/                   # 后端测试
 │   ├── .env.example
+│   ├── docs/                    # backend 配置与 RAG 文档
 │   ├── pyproject.toml
-│   └── RAG_CONFIG.md
+│   └── uv.lock
 ├── docker-compose.yml
 ├── CLAUDE.md
 └── README.md
@@ -330,19 +347,21 @@ FaceTomato/
 
 ## ⚠️ 免责声明
 
-本项目仅用于学习、研究、教学演示与非商业用途。
-
 本项目输出的分析结果、优化建议与模拟面试内容仅供参考，不构成任何招聘结果保证。
 
 用户应对上传的简历、岗位描述及相关数据的合法性、真实性与合规性负责。
 
 若项目接入第三方模型、语音服务或检索服务，相关服务的可用性、准确性与合规性由对应服务提供方负责。
 
+除 `LICENSE` 中明确授予的权利外，第三方数据、素材、模型服务及其输出内容可能受各自条款约束。
+
 开发者不对因使用本项目产生的直接或间接损失承担责任。
 
 ## 📄 许可证
 
-本项目采用 [MIT License](https://github.com/Infinityay/FaceTomato/blob/main/LICENSE) 开源协议，详情见仓库根目录下的 `LICENSE` 文件。
+本项目采用 **GNU Affero General Public License v3.0 (AGPL-3.0)** 许可证发布。你可以在 AGPL-3.0 许可范围内使用、修改和再分发本项目；当你分发本项目或其修改版本时，必须按照 AGPL-3.0 的要求提供对应源代码；如果你将修改后的版本作为网络服务提供给他人使用，还必须向远程交互用户提供对应源代码的获取方式。
+
+具体条款以仓库根目录的 [LICENSE](./LICENSE) 文件为准。
 
 ## 📬 联系方式
 
