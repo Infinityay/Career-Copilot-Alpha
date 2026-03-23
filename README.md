@@ -342,7 +342,7 @@ FaceTomato/
 
 ## 📄 许可证
 
-当前 README 中展示为 `MIT`。如果仓库后续补充 `LICENSE` 文件，建议将此处改为正式链接说明。
+本项目采用 [MIT License](https://github.com/Infinityay/FaceTomato/blob/main/LICENSE) 开源协议，详情见仓库根目录下的 `LICENSE` 文件。
 
 ## 📬 联系方式
 
