@@ -220,6 +220,14 @@ describe("App runtime settings", () => {
     expect(screen.getAllByText("默认").length).toBeGreaterThan(0);
   });
 
+  it("renders the FaceTomato brand name in the desktop and mobile headers", async () => {
+    renderApp();
+
+    await screen.findByText("Resume Page");
+
+    expect(screen.getAllByText("FaceTomato 面柿")).toHaveLength(2);
+  });
+
   it("shows a route fallback when a sidebar navigation suspends", async () => {
     const user = userEvent.setup();
     const deferred = createDeferred();

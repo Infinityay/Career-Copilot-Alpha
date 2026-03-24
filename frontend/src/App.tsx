@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import brandIcon from "/brand-icon.png";
 import { Suspense, lazy, useState, useEffect, useRef, useCallback, type MouseEvent, type ReactNode } from "react";
 
 import { Button } from "./components/ui/button";
@@ -605,9 +606,7 @@ const Sidebar = ({ mobile = false, onNavigate, onClose, onOpenRuntimeSettings }:
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4 md:h-16">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <FileText className="h-4 w-4" />
-          </div>
+          <img src={brandIcon} alt="" aria-hidden="true" className="h-8 w-8 object-contain" />
           <span className="text-base font-semibold">FaceTomato 面柿</span>
         </div>
 
@@ -892,9 +891,7 @@ const App = () => {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <FileText className="h-4 w-4" />
-              </div>
+              <img src={brandIcon} alt="" aria-hidden="true" className="h-8 w-8 object-contain" />
               <span className="text-base font-semibold">FaceTomato 面柿</span>
             </div>
 
