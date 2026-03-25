@@ -172,7 +172,7 @@ async def parse_resume(
                 detail=_make_error("LLM_FAILED", "Failed to extract resume data"),
             ) from exc
 
-        if parse_result.extraction_method != "llm_file_direct" and not parse_result.text.strip():
+        if parse_result.extraction_method not in {"llm_file_direct", "image_then_llm"} and not parse_result.text.strip():
             raise HTTPException(
                 status_code=400,
                 detail=_make_error(
@@ -202,4 +202,3 @@ async def parse_resume(
             status_code=500,
             detail=_make_error("INTERNAL_ERROR", "Internal server error"),
         ) from exc
-
