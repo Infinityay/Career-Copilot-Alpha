@@ -1,8 +1,21 @@
-import type { ReviewSession } from "../types/interviewReview";
+import type { ReviewReportStatus, ReviewSession, ReviewTopicDetail } from "../types/interviewReview";
 
-const withAssessmentFocus = <T extends { highlightedPoints: string[] }>(topic: T) => ({
+const withAssessmentFocus = (
+  topic: Omit<ReviewTopicDetail, "problems" | "assessmentFocus">
+): ReviewTopicDetail => ({
   ...topic,
+  problems: (topic.weaknesses ?? []).slice(0, 2),
   assessmentFocus: topic.highlightedPoints,
+});
+
+const withTopicDetails = (
+  session: Omit<ReviewSession, "topicDetails" | "topics" | "reportStatus"> & {
+    reportStatus: ReviewReportStatus;
+    topics: ReviewTopicDetail[];
+  }
+): ReviewSession => ({
+  ...session,
+  topicDetails: Object.fromEntries(session.topics.map((topic) => [topic.id, topic])),
 });
 
 export const reviewSessions: ReviewSession[] = [
@@ -274,4 +287,11 @@ export const reviewSessions: ReviewSession[] = [
       })
     ]
   }
-];
+].map((session) =>
+  withTopicDetails(
+    session as Omit<ReviewSession, "topicDetails" | "topics" | "reportStatus"> & {
+      reportStatus: ReviewReportStatus;
+      topics: ReviewTopicDetail[];
+    }
+  )
+);

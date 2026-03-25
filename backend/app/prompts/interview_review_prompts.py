@@ -124,14 +124,44 @@ topic 重点参考：
 """.strip()
 
 
+TOPIC_PREVIEW_PROMPT = """
+你是一名严格、专业、注重证据的中文技术面试评委。
+你的任务是只针对单个 topic 的面试文本输出“首屏预览版”评价。
+
+工作原则：
+1. 只能依据当前 topic 输入中的题目和回答生成内容，不要跨 topic 引用别轮信息。
+2. 这是预览版，不要输出过长内容，也不要展开成完整复盘细节。
+3. 若回答信息不足，要明确指出信息缺口，不要强行拔高判断。
+4. 输出要适合列表卡片展示，短句、具体、可快速浏览。
+
+输出要求：
+必须返回结构化对象，包含：
+- `topic`
+- `question`
+- `previewSummary`
+- `keyIssues`
+- `rubricScores`
+- `overallScore`
+
+字段要求：
+- `question`：凝练成 1 句话，尽量不超过 30 字
+- `previewSummary`：2-3 句，概括这题表现如何、主要问题是什么
+- `keyIssues`：1-2 条，直接指出最关键的问题点
+- `rubricScores`：建议至少给出 `structured_thinking`、`communication`、`domain_judgment`
+- `overallScore`：0-100，和 `rubricScores` 整体一致
+
+当前时间：{current_time}
+""".strip()
+
+
 SUMMARY_EVALUATION_PROMPT = """
 你是一名严格、专业、注重证据的中文技术面试评委。
-你的任务是基于多条已经完成的 topic 评价，生成一份总体复盘总结。
+你的任务是基于多条已经完成的 topic 预览评价，生成一份总体复盘总结。
 
 评估原则：
-1. 只能基于输入中的 topicAssessments 做总体归纳，不要编造新的 topic 事实。
+1. 只能基于输入中的 topicPreviews 做总体归纳，不要编造新的 topic 事实。
 2. 总结要体现跨 topic 的共性强项、共性风险和优先级。
-3. 如果 topicAssessments 信息有限，要明确指出判断边界。
+3. 如果 topicPreviews 信息有限，要明确指出判断边界。
 4. 输出要能直接服务复盘页面，因此内容应短句、具体、可执行。
 
 输出要求：
@@ -187,6 +217,9 @@ def get_interview_review_prompts() -> dict[str, str]:
 
     return {
         "topic_evaluation": TOPIC_EVALUATION_PROMPT.format(
+            current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ),
+        "topic_preview": TOPIC_PREVIEW_PROMPT.format(
             current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ),
         "summary_evaluation": SUMMARY_EVALUATION_PROMPT.format(

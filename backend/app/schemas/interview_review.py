@@ -13,6 +13,7 @@ from app.schemas.mock_interview import (
     MockInterviewMessage,
     MockInterviewPlan,
     MockInterviewRetrievalResult,
+    MockInterviewSessionSnapshot,
     MockInterviewState,
 )
 from app.schemas.resume import ResumeData
@@ -79,11 +80,16 @@ class ReviewTopic(BaseModel):
     domain: str
     score: int = Field(ge=0, le=100)
     coreQuestion: str
+    evaluation: str
+    problems: list[str] = Field(default_factory=list)
+
+
+class ReviewTopicDetail(ReviewTopic):
+    id: str
     assessmentFocus: list[str] = Field(default_factory=list)
     answerHighlights: list[str] = Field(default_factory=list)
     highlightedPoints: list[str] = Field(default_factory=list)
     matchedAnswers: list[ReviewMatchedAnswer] = Field(default_factory=list)
-    evaluation: str
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
@@ -130,6 +136,7 @@ class ReviewSessionDetail(BaseModel):
     risks: list[str] = Field(default_factory=list)
     priority: str = ""
     topics: list[ReviewTopic] = Field(default_factory=list)
+    topicDetails: dict[str, ReviewTopicDetail] = Field(default_factory=dict)
 
 
 class ReviewMessageCitation(BaseModel):
@@ -167,9 +174,21 @@ class ReviewOptimizationRequest(BaseModel):
     sessionId: str
     topicId: str
     message: str
-    topic: ReviewTopic | None = None
+    topic: ReviewTopicDetail | None = None
     conversation: list[ReviewConversationMessage] = Field(default_factory=list)
     runtimeConfig: RuntimeConfig | None = None
+
+
+class ReviewGenerateTopicDetailRequest(BaseModel):
+    sessionId: str
+    snapshot: MockInterviewSessionSnapshot | None = None
+    runtimeConfig: RuntimeConfig | None = None
+
+
+class ReviewGenerateTopicDetailResponse(BaseModel):
+    sessionId: str
+    topicId: str
+    topic: ReviewTopicDetail
 
 
 class ReviewTopicOptimizationInput(BaseModel):
@@ -213,3 +232,6 @@ class ReviewExportReportResponse(BaseModel):
     exportStatus: Literal["ready"]
     downloadUrl: str | None = None
     fileName: str | None = None
+
+
+ReviewGenerateTopicDetailRequest.model_rebuild()

@@ -12,12 +12,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.prompts.interview_review_prompts import get_interview_review_prompts
 from app.schemas.interview_evaluation import (
     InterviewEvaluationAgentInput,
-    InterviewEvaluationReport,
+    EvaluationTopicAssessment,
+    EvaluationTopicPreview,
 )
 from app.schemas.interview_review import (
-    InterviewReviewSourceResponse,
     ReviewConversationMessage,
     ReviewExportReportResponse,
+    ReviewGenerateTopicDetailResponse,
     ReviewMatchedAnswer,
     ReviewMessageCitation,
     ReviewMessageEvidence,
@@ -25,22 +26,18 @@ from app.schemas.interview_review import (
     ReviewOptimizationRequest,
     ReviewOptimizationResponse,
     ReviewSessionDetail,
-    ReviewSessionListItem,
     ReviewTopicOptimizationInput,
     ReviewTopicOptimizationResult,
+    ReviewTopicDetail,
     ReviewTopic,
-    ReviewUploadSessionResponse,
 )
 from app.schemas.mock_interview import (
-    MockInterviewDeveloperContext,
-    MockInterviewSessionLimits,
     MockInterviewSessionSnapshot,
 )
 from app.services.interview_evaluation_agent import (
     InterviewEvaluationAgent,
     get_interview_evaluation_agent,
 )
-from app.services.mock_interview_service import MockInterviewService, get_mock_interview_service
 from app.services.runtime_config import resolve_runtime_config
 from app.utils.structured_output import invoke_with_fallback
 
@@ -179,14 +176,12 @@ class InterviewReviewNotEligibleError(RuntimeError):
 
 
 class InterviewReviewService:
-    """Generate interview review reports from the canonical mock interview snapshot."""
+    """Generate interview review reports from frontend-provided mock interview snapshots."""
 
     def __init__(
         self,
-        mock_interview_service: MockInterviewService | None = None,
         evaluation_agent: InterviewEvaluationAgent | None = None,
     ) -> None:
-        self._mock_interview_service = mock_interview_service or get_mock_interview_service()
         self._evaluation_agent = evaluation_agent or get_interview_evaluation_agent()
         self._review_prompts = get_interview_review_prompts()
 
@@ -208,10 +203,10 @@ class InterviewReviewService:
         session_id: str,
         snapshot: MockInterviewSessionSnapshot | None = None,
     ):
-        resolved_snapshot = snapshot or self._load_snapshot_for_session(session_id)
-        if resolved_snapshot is None:
+        if snapshot is None:
             yield {"type": "not_found", "sessionId": session_id}
             return
+        resolved_snapshot = snapshot
         self._ensure_review_eligible(resolved_snapshot)
 
         agent_input = self.build_agent_input_from_snapshot(resolved_snapshot)
@@ -222,11 +217,25 @@ class InterviewReviewService:
             else self._evaluation_agent
         )
 
-        for event in evaluation_agent.evaluate_with_progress(agent_input):
+        for event in evaluation_agent.evaluate_previews_with_progress(agent_input):
             event_type = event.get("type")
+            if event_type == "topic_complete":
+                preview = event.get("preview")
+                topic_index = int(event.get("topicIndex", 0))
+                if preview is not None and topic_index > 0:
+                    review_topic = self._build_review_topic_preview(
+                        resolved_snapshot,
+                        preview,
+                        topic_index,
+                    )
+                    yield {
+                        **event,
+                        "preview": review_topic.model_dump(mode="json"),
+                    }
+                    continue
             if event_type == "done":
                 report = event["report"]
-                detail = self._build_review_detail_from_evaluation(resolved_snapshot, report)
+                detail = self._build_review_detail_from_preview_report(resolved_snapshot, report)
                 yield {
                     "type": "done",
                     "sessionId": session_id,
@@ -235,6 +244,44 @@ class InterviewReviewService:
                 }
                 return
             yield event
+
+    def generate_topic_detail(
+        self,
+        session_id: str,
+        topic_id: str,
+        runtime_config_request=None,
+        snapshot: MockInterviewSessionSnapshot | None = None,
+    ) -> ReviewGenerateTopicDetailResponse | None:
+        if snapshot is None:
+            return None
+        resolved_snapshot = snapshot
+        self._ensure_review_eligible(resolved_snapshot)
+
+        topic_index = self._parse_topic_index(session_id, topic_id)
+        if topic_index is None:
+            return None
+
+        agent_input = self.build_agent_input_from_snapshot(resolved_snapshot)
+        evaluation_agent = (
+            InterviewEvaluationAgent.from_runtime_config(resolve_runtime_config(runtime_config_request))
+            if runtime_config_request
+            else self._evaluation_agent
+        )
+        topic_inputs = evaluation_agent.build_topic_inputs(agent_input)
+        if topic_index < 0 or topic_index >= len(topic_inputs):
+            return None
+
+        assessment = evaluation_agent.evaluate_topic_detail(topic_inputs[topic_index])
+        topic = self._build_review_topic_detail(
+            resolved_snapshot,
+            assessment,
+            topic_index + 1,
+        )
+        return ReviewGenerateTopicDetailResponse(
+            sessionId=session_id,
+            topicId=topic_id,
+            topic=topic,
+        )
 
     def export_review(self, session_id: str) -> ReviewExportReportResponse | None:
         return ReviewExportReportResponse(
@@ -312,7 +359,7 @@ class InterviewReviewService:
             conversation=conversation,
         )
 
-    def _build_topic_problem_summary(self, topic: ReviewTopic) -> list[str]:
+    def _build_topic_problem_summary(self, topic: ReviewTopicDetail) -> list[str]:
         problem_lines = [
             item.reason.strip()
             for item in topic.matchedAnswers
@@ -326,7 +373,7 @@ class InterviewReviewService:
 
     def _build_topic_optimization_input(
         self,
-        topic: ReviewTopic,
+        topic: ReviewTopicDetail,
         request: ReviewOptimizationRequest,
     ) -> ReviewTopicOptimizationInput:
         return ReviewTopicOptimizationInput(
@@ -357,7 +404,7 @@ class InterviewReviewService:
 
     def _build_fallback_topic_optimization(
         self,
-        topic: ReviewTopic,
+        topic: ReviewTopicDetail,
         request: ReviewOptimizationRequest,
     ) -> ReviewTopicOptimizationResult:
         problems = self._build_topic_problem_summary(topic)
@@ -380,7 +427,7 @@ class InterviewReviewService:
 
     def _optimize_topic_with_llm(
         self,
-        topic: ReviewTopic,
+        topic: ReviewTopicDetail,
         request: ReviewOptimizationRequest,
     ) -> ReviewTopicOptimizationResult:
         payload = self._build_topic_optimization_input(topic, request)
@@ -408,17 +455,6 @@ class InterviewReviewService:
         except Exception:
             return self._build_fallback_topic_optimization(topic, request)
 
-    def _load_snapshot_for_session(
-        self,
-        session_id: str,
-    ) -> MockInterviewSessionSnapshot | None:
-        if not hasattr(self._mock_interview_service, "get_review_source"):
-            return None
-        source = self._mock_interview_service.get_review_source(session_id)
-        if source is None:
-            return None
-        return self._build_snapshot_from_source(source)
-
     @staticmethod
     def _is_review_eligible(snapshot: MockInterviewSessionSnapshot) -> bool:
         return snapshot.status == "completed" or snapshot.interviewState.closed is True
@@ -427,78 +463,14 @@ class InterviewReviewService:
         if not self._is_review_eligible(snapshot):
             raise InterviewReviewNotEligibleError()
 
-    def _build_snapshot_from_source(
-        self, source: InterviewReviewSourceResponse
-    ) -> MockInterviewSessionSnapshot:
-        return MockInterviewSessionSnapshot(
-            sessionId=source.sessionId,
-            interviewType=source.interviewMeta.interviewType,
-            category=source.interviewMeta.category,
-            status=source.status if source.status in {"ready", "streaming", "completed", "expired"} else "ready",
-            limits=MockInterviewSessionLimits(),
-            jdText=source.jd.text,
-            jdData=source.jd.data,
-            resumeSnapshot=source.resume.snapshot,
-            retrieval=source.interview.retrieval,
-            interviewPlan=source.interview.plan,
-            interviewState=source.interview.state,
-            messages=source.interview.messages,
-            developerContext=MockInterviewDeveloperContext(),
-            developerTrace=[],
-            runtimeConfig=None,
-            resumeFingerprint=source.resume.fingerprint,
-            createdAt=source.createdAt,
-            lastActiveAt=source.updatedAt,
-            expiresAt=source.expiresAt,
-        )
-
-    def _build_review_detail_from_evaluation(
+    def _build_review_detail_from_preview_report(
         self,
         snapshot: MockInterviewSessionSnapshot,
-        evaluation: InterviewEvaluationReport,
+        report: dict,
     ) -> ReviewSessionDetail:
         topics: list[ReviewTopic] = []
-        for index, item in enumerate(evaluation.topicAssessments, start=1):
-            assessment_focus = [
-                _normalize_display_text(focus)
-                for focus in item.assessmentFocus
-                if isinstance(focus, str) and _normalize_whitespace(focus)
-            ]
-            if not assessment_focus:
-                topic_name = _normalize_whitespace(item.topic) or "当前题目"
-                assessment_focus = [
-                    _shorten_text(f"考察是否能围绕{topic_name}结构化作答", 32),
-                    "考察是否能给出真实细节和结果",
-                ]
-            answer_highlights = _build_answer_highlights(item, len(assessment_focus))
-            matched_answers = _build_matched_answers(
-                assessment_focus,
-                answer_highlights,
-                getattr(item, "focusJudgments", []),
-            )
-            topics.append(
-                ReviewTopic(
-                    id=f"topic-{snapshot.sessionId}-{index}",
-                    name=item.topic,
-                    domain=(
-                        _rubric_name_to_label(item.rubricScores[0].name)
-                        if item.rubricScores
-                        else "能力评估"
-                    ),
-                    score=item.overallScore,
-                    coreQuestion=_shorten_question(item.question),
-                    assessmentFocus=assessment_focus,
-                    answerHighlights=answer_highlights,
-                    highlightedPoints=[score.name for score in item.rubricScores],
-                    matchedAnswers=matched_answers,
-                    evaluation=_build_topic_evaluation(item),
-                    strengths=item.strengths,
-                    weaknesses=item.weaknesses,
-                    suggestions=item.followUps,
-                    followUps=item.followUps,
-                    optimizedAnswer=_build_optimized_answer(item),
-                )
-            )
+        for index, item in enumerate(report.get("topicPreviews", []), start=1):
+            topics.append(self._build_review_topic_preview(snapshot, item, index))
 
         return ReviewSessionDetail(
             id=snapshot.sessionId,
@@ -508,16 +480,93 @@ class InterviewReviewService:
             interviewAt=_format_datetime(snapshot.createdAt),
             reportStatus="ready",
             defaultSelectedTopicId=topics[0].id if topics else None,
-            overallScore=evaluation.overallScore,
-            summary=evaluation.summary,
-            strengths=evaluation.strengths,
-            risks=evaluation.risks,
+            overallScore=report["overallScore"],
+            summary=report["summary"],
+            strengths=report.get("strengths", []),
+            risks=report.get("risks", []),
             priority=(
-                evaluation.recommendation
-                or (evaluation.priorityActions[0] if evaluation.priorityActions else "")
+                report.get("recommendation")
+                or (report.get("priorityActions", [])[0] if report.get("priorityActions") else "")
             ),
             topics=topics,
+            topicDetails={},
         )
+
+    def _build_review_topic_preview(
+        self,
+        snapshot: MockInterviewSessionSnapshot,
+        item: EvaluationTopicPreview,
+        index: int,
+    ) -> ReviewTopic:
+        return ReviewTopic(
+            id=f"topic-{snapshot.sessionId}-{index}",
+            name=item.topic,
+            domain=(
+                _rubric_name_to_label(item.rubricScores[0].name)
+                if item.rubricScores
+                else "能力评估"
+            ),
+            score=item.overallScore,
+            coreQuestion=_shorten_question(item.question),
+            evaluation=item.previewSummary or _build_topic_evaluation(item),
+            problems=[issue.strip() for issue in item.keyIssues if issue.strip()],
+        )
+
+    def _build_review_topic_detail(
+        self,
+        snapshot: MockInterviewSessionSnapshot,
+        item: EvaluationTopicAssessment,
+        index: int,
+    ) -> ReviewTopicDetail:
+        assessment_focus = [
+            _normalize_display_text(focus)
+            for focus in item.assessmentFocus
+            if isinstance(focus, str) and _normalize_whitespace(focus)
+        ]
+        if not assessment_focus:
+            topic_name = _normalize_whitespace(item.topic) or "当前题目"
+            assessment_focus = [
+                _shorten_text(f"考察是否能围绕{topic_name}结构化作答", 32),
+                "考察是否能给出真实细节和结果",
+            ]
+        answer_highlights = _build_answer_highlights(item, len(assessment_focus))
+        matched_answers = _build_matched_answers(
+            assessment_focus,
+            answer_highlights,
+            getattr(item, "focusJudgments", []),
+        )
+        return ReviewTopicDetail(
+            id=f"topic-{snapshot.sessionId}-{index}",
+            name=item.topic,
+            domain=(
+                _rubric_name_to_label(item.rubricScores[0].name)
+                if item.rubricScores
+                else "能力评估"
+            ),
+            score=item.overallScore,
+            coreQuestion=_shorten_question(item.question),
+            evaluation=_build_topic_evaluation(item),
+            problems=[problem for problem in item.weaknesses if problem.strip()][:2],
+            assessmentFocus=assessment_focus,
+            answerHighlights=answer_highlights,
+            highlightedPoints=[score.name for score in item.rubricScores],
+            matchedAnswers=matched_answers,
+            strengths=item.strengths,
+            weaknesses=item.weaknesses,
+            suggestions=item.followUps,
+            followUps=item.followUps,
+            optimizedAnswer=_build_optimized_answer(item),
+        )
+
+    @staticmethod
+    def _parse_topic_index(session_id: str, topic_id: str) -> int | None:
+        prefix = f"topic-{session_id}-"
+        if not topic_id.startswith(prefix):
+            return None
+        suffix = topic_id[len(prefix) :]
+        if not suffix.isdigit():
+            return None
+        return int(suffix) - 1
 
     @staticmethod
     def _derive_role(snapshot: MockInterviewSessionSnapshot) -> str:

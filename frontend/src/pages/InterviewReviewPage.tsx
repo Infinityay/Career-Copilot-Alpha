@@ -11,18 +11,23 @@ import {
   Mic,
   CheckCircle2,
   TriangleAlert,
+  Wand2,
+  Eye,
 } from "lucide-react";
 import {
   clearStaleInterviewReviewGeneration,
   fetchInterviewReviewSessions,
   generateInterviewReviewReport,
+  generateInterviewReviewTopicDetail,
   getInterviewReviewGenerationProgress,
   getInterviewReviewGenerationPromise,
   getInterviewReviewTopicCount,
   getInterviewReviewSessionDetailSnapshot,
   getInterviewReviewSessionsSnapshot,
   isInterviewReviewReportGenerating,
+  mergeInterviewReviewProgressIntoDetail,
   optimizeInterviewReviewTopic,
+  resetInterviewReviewSession,
   type InterviewReviewGenerationProgress,
 } from "../lib/interviewReviewApi";
 import { getRecoverableSessionById } from "../lib/mockInterviewRecovery";
@@ -33,11 +38,12 @@ import type {
   ReviewSessionDetail,
   ReviewSessionListItem,
   ReviewTopic,
+  ReviewTopicDetail,
 } from "../types/interviewReview";
 import { cn } from "../lib/utils";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Textarea } from "../components/ui/textarea";
 import { useRuntimeSettingsStore } from "../store/runtimeSettingsStore";
 
@@ -62,7 +68,7 @@ const topicRubrics: Record<string, RubricPoint[]> = {
   ],
 };
 
-const genericRubricFallback = (topic: ReviewTopic): RubricPoint[] => [
+const genericRubricFallback = (topic: ReviewTopicDetail): RubricPoint[] => [
   { label: "Framework completeness", keywords: topic.coreQuestion.slice(0, 8).split("") },
   { label: "Tools and methods", keywords: topic.answerHighlights.join(" ").split(" ").slice(0, 3) },
   { label: "Results and optimization", keywords: topic.suggestions.join(" ").split(" ").slice(0, 3) },
@@ -100,7 +106,7 @@ const getMatchedAnswerState = (status: ReviewMatchedAnswer["status"] | undefined
   return { matched: true, tone: "success", message: "" };
 };
 
-const buildAnswerComparison = (topic: ReviewTopic) => {
+const buildAnswerComparison = (topic: ReviewTopicDetail) => {
   const explicitMatches = topic.matchedAnswers;
   const focusPoints = topic.assessmentFocus.map((focus) => ({ label: focus, keywords: [] }));
   const matches: Array<{
@@ -140,16 +146,20 @@ const buildAnswerComparison = (topic: ReviewTopic) => {
   return { matches, offTopicAnswers };
 };
 
-const buildTopicProblemSummary = (topic: ReviewTopic) => {
-  const problemLines = topic.matchedAnswers
+const buildTopicProblemSummary = (topic: ReviewTopic | ReviewTopicDetail) => {
+  const explicitProblems = topic.problems
+    .map((item) => item.trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+  const detailTopic = topic as Partial<ReviewTopicDetail>;
+  const problemLines = (detailTopic.matchedAnswers ?? [])
     .filter((item) => item.status && item.status !== "covered")
     .map((item) => (item.reason?.trim() || `${item.point} 回答不完整，需要补充。`).replace(/\s+/g, " "));
 
-  const weaknessLines = topic.weaknesses
+  const weaknessLines = (detailTopic.weaknesses ?? [])
     .map((item) => item.trim().replace(/\s+/g, " "))
     .filter(Boolean);
 
-  const merged = [...problemLines, ...weaknessLines];
+  const merged = [...explicitProblems, ...problemLines, ...weaknessLines];
   return merged.length > 0 ? Array.from(new Set(merged)) : ["当前没有提炼出明确问题，建议结合考察点继续补充细节。"];
 };
 
@@ -215,19 +225,61 @@ const InterviewReviewPage = () => {
     return selectedSession.topics.find((topic) => topic.id === selectedTopicId) ?? selectedSession.topics.find((topic) => topic.id === getDefaultTopicId(selectedSession)) ?? selectedSession.topics[0] ?? null;
   }, [selectedSession, selectedTopicId]);
 
+  const selectedTopicDetail = useMemo(
+    () => (selectedSession && selectedTopic ? selectedSession.topicDetails[selectedTopic.id] ?? null : null),
+    [selectedSession, selectedTopic]
+  );
+
   const topicChatMessages = useMemo(
-    () => (selectedSession && selectedTopic ? chatMessages.filter((message) => message.sessionId === selectedSession.id && message.topicId === selectedTopic.id) : []),
-    [chatMessages, selectedSession, selectedTopic]
+    () => (selectedSession && selectedTopicDetail ? chatMessages.filter((message) => message.sessionId === selectedSession.id && message.topicId === selectedTopicDetail.id) : []),
+    [chatMessages, selectedSession, selectedTopicDetail]
   );
 
   const selectedTopicProblems = useMemo(
-    () => (selectedTopic ? buildTopicProblemSummary(selectedTopic) : []),
-    [selectedTopic]
+    () => (selectedTopicDetail ? buildTopicProblemSummary(selectedTopicDetail) : selectedTopic ? buildTopicProblemSummary(selectedTopic) : []),
+    [selectedTopic, selectedTopicDetail]
   );
+  const [loadingTopicDetailId, setLoadingTopicDetailId] = useState<string | null>(null);
 
   useEffect(() => {
     setProblemsExpanded(false);
   }, [selectedTopicId]);
+
+  useEffect(() => {
+    const sessionId = selectedSession?.id;
+    const topicId = selectedTopic?.id;
+    const topicDetail = selectedTopicDetail;
+    const reportStatus = selectedSession?.reportStatus;
+
+    if (!sessionId || !topicId || reportStatus !== "ready" || isGeneratingReport) {
+      return;
+    }
+    if (topicDetail || loadingTopicDetailId === topicId) {
+      return;
+    }
+
+    setLoadingTopicDetailId(topicId);
+    void generateInterviewReviewTopicDetail(sessionId, topicId, runtimeConfig)
+      .then((result) => {
+        setLoadingTopicDetailId((current) => (current === topicId ? null : current));
+        setSelectedSession((current) => {
+          if (!current || current.id !== sessionId) {
+            return current;
+          }
+          return {
+            ...current,
+            topicDetails: {
+              ...current.topicDetails,
+              [result.topic.id]: result.topic,
+            },
+          };
+        });
+      })
+      .catch((error) => {
+        setLoadingTopicDetailId((current) => (current === topicId ? null : current));
+        setOptimizationError(error instanceof Error ? error.message : "Failed to generate topic detail.");
+      });
+  }, [isGeneratingReport, loadingTopicDetailId, runtimeConfig, selectedSession?.id, selectedSession?.reportStatus, selectedTopic?.id, selectedTopicDetail]);
 
   useEffect(() => {
     if (!selectedSession || !isGeneratingReport) {
@@ -236,7 +288,15 @@ const InterviewReviewPage = () => {
 
     const sessionId = selectedSession.id;
     const timer = window.setInterval(() => {
-      setGenerationProgress(getInterviewReviewGenerationProgress(sessionId));
+      const progress = getInterviewReviewGenerationProgress(sessionId);
+      setGenerationProgress(progress);
+      setSelectedSession((current) => {
+        if (!current || current.id !== sessionId) {
+          return current;
+        }
+        return mergeInterviewReviewProgressIntoDetail(current, progress);
+      });
+      setSelectedTopicId((current) => current ?? progress?.completedTopics[0]?.id ?? null);
     }, 250);
 
     return () => {
@@ -260,7 +320,9 @@ const InterviewReviewPage = () => {
     }
 
     setIsGeneratingReport(true);
-    setGenerationProgress(getInterviewReviewGenerationProgress(sessionId));
+    const progress = getInterviewReviewGenerationProgress(sessionId);
+    setGenerationProgress(progress);
+    setSelectedSession((current) => mergeInterviewReviewProgressIntoDetail(current, progress));
     const inFlight = getInterviewReviewGenerationPromise(sessionId);
     if (!inFlight) {
       const cleared = clearStaleInterviewReviewGeneration(sessionId);
@@ -315,6 +377,7 @@ const InterviewReviewPage = () => {
     const result = await generateInterviewReviewReport(sessionId, runtimeConfig, {
       onProgress: (progress) => {
         setGenerationProgress(progress);
+        setSelectedSession((current) => mergeInterviewReviewProgressIntoDetail(current, progress));
       },
     });
     setReportStatuses((current) => ({ ...current, [result.sessionId]: result.reportStatus }));
@@ -371,27 +434,34 @@ const InterviewReviewPage = () => {
 
   const handleGenerateReport = () => {
     if (!selectedSession) return;
+    const sessionId = selectedSession.id;
     setOptimizationDraft("");
     setOptimizationError(null);
-    setSelectedTopicId(getDefaultTopicId(selectedSession));
-    void triggerReportGeneration(selectedSession.id)
+    setSelectedTopicId(null);
+    setChatMessages([]);
+    resetInterviewReviewSession(sessionId);
+    const resetDetail = getInterviewReviewSessionDetailSnapshot(sessionId);
+    if (resetDetail) {
+      setSelectedSession(resetDetail);
+    }
+    void triggerReportGeneration(sessionId)
       .catch((error) => setOptimizationError(error instanceof Error ? error.message : "Failed to generate interview review report."))
       .finally(() => setIsGeneratingReport(false));
   };
 
   const handleOptimizeTopic = async () => {
-    if (!selectedSession || !selectedTopic || !optimizationDraft.trim() || isOptimizing) return;
+    if (!selectedSession || !selectedTopicDetail || !optimizationDraft.trim() || isOptimizing) return;
     const userMessage = optimizationDraft.trim();
     setOptimizationDraft("");
-    setChatMessages((current) => [...current, { messageId: `user-${Date.now()}`, sessionId: selectedSession.id, topicId: selectedTopic.id, role: "user", content: userMessage, createdAt: new Date().toISOString() }]);
+    setChatMessages((current) => [...current, { messageId: `user-${Date.now()}`, sessionId: selectedSession.id, topicId: selectedTopicDetail.id, role: "user", content: userMessage, createdAt: new Date().toISOString() }]);
     setIsOptimizing(true);
     setOptimizationError(null);
     try {
       const result = await optimizeInterviewReviewTopic({
         sessionId: selectedSession.id,
-        topicId: selectedTopic.id,
+        topicId: selectedTopicDetail.id,
         message: userMessage,
-        topic: selectedTopic,
+        topic: selectedTopicDetail,
         conversation: topicChatMessages,
         runtimeConfig,
       });
@@ -455,7 +525,7 @@ const InterviewReviewPage = () => {
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_480px] 2xl:grid-cols-[minmax(0,1fr)_520px]">
         <div className="space-y-6">
           <div className="flex items-center gap-3">
             <Button type="button" variant="ghost" className="h-9 rounded-full border border-border/70 px-4 text-muted-foreground hover:bg-sidebar/35" onClick={handleBackToList}><ArrowLeft className="mr-2 h-4 w-4" />返回记录列表</Button>
@@ -472,7 +542,7 @@ const InterviewReviewPage = () => {
           </Card>
 
           <AnimatePresence mode="wait">
-            {isGeneratingReport ? (
+            {isGeneratingReport && selectedSession.topics.length === 0 ? (
               <motion.div key="generating" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
                 <Card className="rounded-3xl border border-border/70 shadow-sm">
                   <CardContent className="flex min-h-[320px] flex-col items-center justify-center gap-5 p-8 text-center">
@@ -513,23 +583,208 @@ const InterviewReviewPage = () => {
               <motion.div key="empty" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}><Card className="rounded-3xl border border-dashed border-border/70 shadow-sm"><CardContent className="flex min-h-[320px] flex-col items-center justify-center gap-4 p-8 text-center"><Sparkles className="h-8 w-8 text-primary" /><div><h2 className="text-xl font-semibold text-foreground">尚未生成 LLM 复盘评价</h2><p className="text-sm text-muted-foreground">点击“生成报告”后会调用后端生成复盘，并把结果保存在当前浏览器的本地记录中。</p></div></CardContent></Card></motion.div>
             ) : (
               <motion.div key="topics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="space-y-5 pt-2">
+                {isGeneratingReport ? (
+                  <Card className="rounded-3xl border border-border/70 bg-sidebar/20 shadow-sm">
+                    <CardContent className="space-y-3 p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-foreground">复盘总览生成中</p>
+                        <p className="text-sm font-semibold text-primary">
+                          {generationProgress
+                            ? `${generationProgress.currentTopic}/${generationProgress.totalTopics}`
+                            : `0/${selectedSessionTopicCount}`}
+                        </p>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-border/60">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all duration-300"
+                          style={{
+                            width: `${
+                              generationProgress?.totalTopics
+                                ? (generationProgress.currentTopic / generationProgress.totalTopics) * 100
+                                : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
                 {selectedSession.topics.map((topic) => {
-                  const comparison = buildAnswerComparison(topic);
                   const isActive = topic.id === (selectedTopic?.id ?? getDefaultTopicId(selectedSession));
-                  return <Card key={topic.id} className={cn("rounded-3xl border border-border/70 shadow-sm", isActive && "border-primary/25")}><CardContent className="space-y-6 p-5 md:p-6"><div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-sidebar/25 px-5 py-4"><div className="flex items-center gap-3"><button type="button" onClick={() => setSelectedTopicId(topic.id)} className="text-left text-2xl font-semibold text-foreground">{topic.name}</button></div><Badge variant="outline" className={cn("rounded-full border px-4 py-2 text-base font-semibold", getScoreBadgeTone(topic.score))}>AI 评分 {topic.score}</Badge></div><div className="rounded-3xl border border-border/70 bg-background px-5 py-5"><p className="mb-2 text-sm font-semibold text-foreground">核心问题</p><p className="text-base leading-8 text-foreground">{topic.coreQuestion}</p></div><div className="grid gap-4 xl:grid-cols-2"><div className="rounded-3xl border border-border/70 bg-background px-5 py-5"><p className="mb-3 text-sm font-semibold text-foreground">面试官考察意图</p><div className="space-y-3">{(topic.assessmentFocus ?? []).map((focus, index) => <div key={`${topic.id}-focus-${index}`} className="rounded-2xl bg-sidebar/30 px-4 py-3"><p className="text-sm text-muted-foreground">考察点 {index + 1}</p><p className="mt-1 text-base font-medium text-foreground">{focus}</p></div>)}</div></div><div className="rounded-3xl border border-border/70 bg-background px-5 py-5"><p className="mb-3 text-sm font-semibold text-foreground">我的实际回答</p><div className="space-y-3">{comparison.matches.map((match, index) => { const state = getMatchedAnswerState(match.status, match.matchedAnswer); const warning = state.tone === "warning"; return <div key={match.point.label} className={cn("rounded-2xl border px-4 py-3", state.matched ? "border-emerald-500/20 bg-emerald-500/5" : warning ? "border-amber-500/20 bg-amber-500/5" : "border-rose-500/20 bg-rose-500/5")}><div className="flex items-start gap-3">{state.matched ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <TriangleAlert className={cn("mt-0.5 h-4 w-4 shrink-0", warning ? "text-amber-500" : "text-rose-500")} />}<div><p className="text-sm text-muted-foreground">采分点 {index + 1}</p>{state.matched ? <p className="text-base leading-7 text-foreground">{match.matchedAnswer}</p> : <div className="space-y-1.5"><p className={cn("text-sm leading-7", warning ? "text-amber-700 dark:text-amber-300" : "text-rose-600 dark:text-rose-300")}>{state.message}</p>{match.matchedAnswer ? <p className={cn("text-sm leading-7", warning ? "text-amber-800 dark:text-amber-200" : "text-rose-700 dark:text-rose-200")}>实际回答：{match.matchedAnswer}</p> : null}{match.reason ? <p className={cn("text-xs leading-6", warning ? "text-amber-700/90 dark:text-amber-300/90" : "text-rose-600/90 dark:text-rose-300/90")}>判定依据：{match.reason}</p> : null}</div>}</div></div></div>; })}</div></div></div></CardContent></Card>;
+                  const detailReady = Boolean(selectedSession.topicDetails[topic.id]);
+                  const detailLoading = loadingTopicDetailId === topic.id;
+                  return (
+                    <Card key={topic.id} className={cn("rounded-3xl border border-border/70 shadow-sm", isActive && "border-primary/25")}>
+                      <CardContent className="space-y-5 p-5 md:p-6">
+                        <div className="rounded-2xl border border-border/70 bg-sidebar/25 px-5 py-4">
+                          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <button type="button" onClick={() => setSelectedTopicId(topic.id)} className="text-left text-2xl font-semibold text-foreground">
+                                {topic.name}
+                              </button>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-3 self-start md:ml-4">
+                              <Badge variant="outline" className={cn("rounded-full border px-4 py-2 text-base font-semibold", getScoreBadgeTone(topic.score))}>
+                              AI 评分 {topic.score}
+                              </Badge>
+                              <Button
+                                type="button"
+                                variant={detailReady ? "outline" : "default"}
+                                className={cn(
+                                  "rounded-2xl whitespace-nowrap",
+                                  isGeneratingReport && "cursor-not-allowed opacity-60",
+                                  detailReady
+                                    ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-700 hover:bg-emerald-500/12 dark:text-emerald-300"
+                                    : "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+                                )}
+                                onClick={() => setSelectedTopicId(topic.id)}
+                                disabled={isGeneratingReport}
+                              >
+                                {detailLoading ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    生成中...
+                                  </>
+                                ) : detailReady ? (
+                                  <>
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    查看深度分析
+                                  </>
+                                ) : (
+                                  <>
+                                    <Wand2 className="mr-2 h-4 w-4" />
+                                    生成深度分析
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="rounded-3xl border border-border/70 bg-background px-5 py-5">
+                          <p className="mb-2 text-sm font-semibold text-foreground">核心问题</p>
+                          <p className="text-base leading-8 text-foreground">{topic.coreQuestion}</p>
+                        </div>
+                        <div className="rounded-3xl border border-border/70 bg-background px-5 py-5">
+                          <p className="mb-2 text-sm font-semibold text-foreground">预览评价</p>
+                          <p className="text-sm leading-7 text-foreground">{topic.evaluation}</p>
+                        </div>
+                        <div className="rounded-3xl border border-border/70 bg-background px-5 py-5">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-foreground">当前最主要的问题</p>
+                          </div>
+                          <div className="mt-3 space-y-2 text-sm leading-7 text-muted-foreground">
+                            {buildTopicProblemSummary(topic).slice(0, 2).map((problem, index) => (
+                              <p key={`${topic.id}-preview-problem-${index}`}>{problem}</p>
+                            ))}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
                 })}
               </motion.div>
             )}
           </AnimatePresence>
         </div>
         <div className="xl:sticky xl:top-6 xl:self-start">
-          <Card className="min-h-[620px] overflow-hidden rounded-3xl border border-border/70 shadow-sm xl:h-[calc(100vh-1.5rem)]">
-            <CardHeader className="border-b border-border/60 bg-background/95 pb-4"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-xl font-semibold tracking-tight">面试回复打磨</CardTitle><CardDescription className="mt-1 text-sm leading-6">选择话题，发送你的思路和疑问，获取针对性的优化建议。</CardDescription></div></div></CardHeader>
+          <Card className="min-h-[620px] overflow-hidden rounded-3xl border border-border/70 bg-gradient-to-b from-background to-sidebar/20 shadow-sm xl:h-[calc(100vh-1.5rem)]">
+            <CardHeader className="border-b border-border/60 bg-background/95 pb-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-xl font-semibold tracking-tight">面试回复打磨</CardTitle>
+                </div>
+              </div>
+            </CardHeader>
             <CardContent className="flex min-h-[540px] flex-col p-0 xl:h-[calc(100%-5rem)]">
-              {selectedTopic ? (
+              {isGeneratingReport ? (
+                <div className="flex min-h-[540px] flex-1 items-center justify-center p-8">
+                  <div className="max-w-sm rounded-3xl border border-border/70 bg-background px-6 py-6 text-center shadow-sm">
+                    <Loader2 className="mx-auto h-7 w-7 animate-spin text-primary" />
+                    <p className="mt-4 text-base font-semibold text-foreground">正在生成复盘总览</p>
+                  </div>
+                </div>
+              ) : selectedTopic ? (
                 <>
-                  <div className="flex-1 overflow-y-auto px-4 py-5"><div className="space-y-3"><div className="rounded-3xl border border-border/70 bg-background px-4 py-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5"><h3 className="text-lg font-semibold tracking-tight text-foreground">{selectedTopic.name}</h3></div><Badge variant="outline" className={cn("shrink-0 rounded-full border px-3 py-1 text-sm font-semibold", getScoreBadgeTone(selectedTopic.score))}>当前分数 {selectedTopic.score}</Badge></div><div className="mt-3 space-y-3 text-sm leading-7"><div><p className="font-semibold text-foreground">核心问题</p><p className="mt-1 text-foreground">{selectedTopic.coreQuestion}</p></div><div><div className="flex items-center justify-between gap-3"><p className="font-semibold text-foreground">回答存在的问题</p>{selectedTopicProblems.length > 2 ? <button type="button" onClick={() => setProblemsExpanded((current) => !current)} className="text-xs font-medium text-primary hover:underline">{problemsExpanded ? "收起" : "展开全部"}</button> : null}</div><div className="mt-1 space-y-1.5 text-muted-foreground">{(problemsExpanded ? selectedTopicProblems : selectedTopicProblems.slice(0, 2)).map((problem, index) => <p key={`${selectedTopic.id}-problem-${index}`}>{problem}</p>)}</div></div></div></div>{topicChatMessages.map((message) => message.role === "user" ? <div key={message.messageId} className="flex justify-end"><div className="max-w-[85%] rounded-[22px] rounded-br-md bg-primary px-4 py-3 text-sm leading-7 text-primary-foreground shadow-sm">{message.content}</div></div> : <div key={message.messageId} className="rounded-3xl border border-primary/15 bg-primary/5 px-4 py-4"><p className="text-sm font-semibold text-primary">深度打磨回答</p><p className="mt-3 text-sm leading-7 text-foreground">{message.content}</p>{message.evidence?.find((item) => item.type === "optimized_answer" && item.content.trim()) ? <div className="mt-4 rounded-2xl border border-primary/20 bg-background/90 px-4 py-3"><p className="text-xs font-semibold tracking-wide text-primary">建议回答</p><p className="mt-2 text-sm leading-7 text-foreground">{message.evidence.find((item) => item.type === "optimized_answer")?.content}</p></div> : null}</div>)}{isOptimizing ? <div className="rounded-3xl border border-border/60 bg-background px-4 py-4 text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />正在生成打磨建议...</div> : null}{optimizationError ? <div className="rounded-3xl border border-rose-500/20 bg-rose-500/5 px-4 py-4 text-sm leading-6 text-rose-600 dark:text-rose-300">{optimizationError}</div> : null}</div></div>
-                  <div className="border-t border-border/60 px-4 pb-4 pt-3"><div className="flex items-center gap-2 rounded-[16px] border border-border/60 bg-muted/20 px-2 py-1.5"><Textarea value={optimizationDraft} onChange={(event) => setOptimizationDraft(event.target.value)} onKeyDown={handleOptimizationDraftKeyDown} placeholder="输入你想探讨的话题，或询问这个问题还能从哪些角度拓展。" className="min-h-[48px] flex-1 resize-none rounded-[12px] border-0 bg-transparent px-3 py-2.5 text-sm leading-6 shadow-none hover:bg-transparent focus:bg-transparent focus:ring-0 focus-visible:ring-0" maxLength={1500} /><Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-full text-foreground hover:bg-transparent hover:text-foreground"><Mic className="h-4 w-4" /></Button><Button type="button" size="icon" className="h-8 w-8 shrink-0 rounded-full border-0 bg-primary/60 text-primary-foreground hover:bg-primary/60" onClick={handleOptimizeTopic} disabled={!optimizationDraft.trim() || isOptimizing}><Send className="h-4 w-4" /></Button></div><div className="mt-2 flex items-center justify-between px-1 text-[11px] text-muted-foreground/90"><span>建议控制在 1200 字以内</span><span>{optimizationDraft.length}/1500</span></div></div>
+                  <div className="flex-1 overflow-y-auto px-4 py-5">
+                    <div className="space-y-4">
+                      <div className="rounded-3xl border border-border/70 bg-background px-5 py-4 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
+                            <h3 className="text-xl font-semibold tracking-tight text-foreground">{selectedTopic.name}</h3>
+                          </div>
+                          <Badge variant="outline" className={cn("shrink-0 rounded-full border px-3 py-1 text-sm font-semibold", getScoreBadgeTone(selectedTopic.score))}>
+                            当前分数 {selectedTopic.score}
+                          </Badge>
+                        </div>
+                        <div className="mt-4 space-y-4 text-sm leading-7">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">核心问题</p>
+                            <p className="mt-2 text-[15px] leading-7 text-foreground">{selectedTopic.coreQuestion}</p>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">回答存在的问题</p>
+                              {selectedTopicProblems.length > 2 ? <button type="button" onClick={() => setProblemsExpanded((current) => !current)} className="text-xs font-medium text-primary hover:underline">{problemsExpanded ? "收起" : "展开全部"}</button> : null}
+                            </div>
+                            <div className="mt-3 space-y-2">
+                              {(problemsExpanded ? selectedTopicProblems : selectedTopicProblems.slice(0, 2)).map((problem, index) => (
+                                <div key={`${selectedTopic.id}-problem-${index}`} className="rounded-2xl border border-border/60 bg-sidebar/20 px-4 py-3 text-sm leading-7 text-foreground/85">
+                                  {problem}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      {!selectedTopicDetail ? (
+                        <div className="rounded-3xl border border-border/70 bg-background px-5 py-6 text-sm text-muted-foreground shadow-sm">
+                          {loadingTopicDetailId === selectedTopic.id ? (
+                            <>
+                              <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+                              正在生成该 Topic 的深度分析...
+                            </>
+                          ) : (
+                            "正在准备该 Topic 的深度分析。"
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="space-y-4">
+                            <div className="rounded-3xl border border-border/70 bg-background px-5 py-5 shadow-sm">
+                              <div className="mb-4 flex items-center justify-between gap-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">面试官考察意图</p>
+                                <span className="rounded-full bg-sidebar/40 px-3 py-1 text-xs text-muted-foreground">
+                                  {selectedTopicDetail.assessmentFocus.length} 个考察点
+                                </span>
+                              </div>
+                              <div className="space-y-3">
+                                {selectedTopicDetail.assessmentFocus.map((focus, index) => (
+                                  <div key={`${selectedTopicDetail.id}-focus-${index}`} className="rounded-2xl border border-border/60 bg-sidebar/20 px-4 py-3">
+                                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">考察点 {index + 1}</p>
+                                    <p className="mt-2 text-[15px] leading-7 text-foreground">{focus}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="rounded-3xl border border-border/70 bg-background px-5 py-5 shadow-sm">
+                              <p className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">我的实际回答</p>
+                              <div className="space-y-3">
+                                {buildAnswerComparison(selectedTopicDetail).matches.map((match, index) => {
+                                  const state = getMatchedAnswerState(match.status, match.matchedAnswer);
+                                  const warning = state.tone === "warning";
+                                  return <div key={match.point.label} className={cn("rounded-2xl border px-4 py-4", state.matched ? "border-emerald-500/20 bg-emerald-500/5" : warning ? "border-amber-500/20 bg-amber-500/5" : "border-rose-500/20 bg-rose-500/5")}><div className="flex items-start gap-3">{state.matched ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <TriangleAlert className={cn("mt-0.5 h-4 w-4 shrink-0", warning ? "text-amber-500" : "text-rose-500")} />}<div className="min-w-0 flex-1"><p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">采分点 {index + 1}</p>{state.matched ? <p className="mt-2 text-[15px] leading-7 text-foreground">{match.matchedAnswer}</p> : <div className="mt-2 space-y-2"><p className={cn("text-sm leading-7", warning ? "text-amber-800 dark:text-amber-200" : "text-rose-700 dark:text-rose-200")}>{state.message}</p>{match.matchedAnswer ? <div className="rounded-xl bg-background/80 px-3 py-2 text-sm leading-7 text-foreground/85">实际回答：{match.matchedAnswer}</div> : null}{match.reason ? <p className={cn("text-xs leading-6", warning ? "text-amber-700/90 dark:text-amber-300/90" : "text-rose-600/90 dark:text-rose-300/90")}>判定依据：{match.reason}</p> : null}</div>}</div></div></div>;
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                          {topicChatMessages.map((message) => message.role === "user" ? <div key={message.messageId} className="flex justify-end"><div className="max-w-[85%] rounded-[22px] rounded-br-md bg-primary px-4 py-3 text-sm leading-7 text-primary-foreground shadow-sm">{message.content}</div></div> : <div key={message.messageId} className="rounded-3xl border border-primary/15 bg-primary/5 px-4 py-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">深度打磨回答</p><p className="mt-3 text-sm leading-7 text-foreground">{message.content}</p>{message.evidence?.find((item) => item.type === "optimized_answer" && item.content.trim()) ? <div className="mt-4 rounded-2xl border border-primary/20 bg-background/90 px-4 py-3"><p className="text-xs font-semibold tracking-[0.16em] text-primary">建议回答</p><p className="mt-2 text-sm leading-7 text-foreground">{message.evidence.find((item) => item.type === "optimized_answer")?.content}</p></div> : null}</div>)}
+                          {isOptimizing ? <div className="rounded-3xl border border-border/60 bg-background px-4 py-4 text-sm text-muted-foreground shadow-sm"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />正在生成打磨建议...</div> : null}
+                          {optimizationError ? <div className="rounded-3xl border border-rose-500/20 bg-rose-500/5 px-4 py-4 text-sm leading-6 text-rose-600 dark:text-rose-300 shadow-sm">{optimizationError}</div> : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="border-t border-border/60 px-4 pb-4 pt-3"><div className="flex items-center gap-2 rounded-[16px] border border-border/60 bg-muted/20 px-2 py-1.5"><Textarea value={optimizationDraft} onChange={(event) => setOptimizationDraft(event.target.value)} onKeyDown={handleOptimizationDraftKeyDown} placeholder={selectedTopicDetail ? "输入你想探讨的话题，或询问这个问题还能从哪些角度拓展。" : "等待该 Topic 的深度分析生成后，再继续打磨回答。"} className="min-h-[48px] flex-1 resize-none rounded-[12px] border-0 bg-transparent px-3 py-2.5 text-sm leading-6 shadow-none hover:bg-transparent focus:bg-transparent focus:ring-0 focus-visible:ring-0" maxLength={1500} disabled={!selectedTopicDetail} /><Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 rounded-full text-foreground hover:bg-transparent hover:text-foreground"><Mic className="h-4 w-4" /></Button><Button type="button" size="icon" className="h-8 w-8 shrink-0 rounded-full border-0 bg-primary/60 text-primary-foreground hover:bg-primary/60" onClick={handleOptimizeTopic} disabled={!selectedTopicDetail || !optimizationDraft.trim() || isOptimizing}><Send className="h-4 w-4" /></Button></div><div className="mt-2 flex items-center justify-between px-1 text-[11px] text-muted-foreground/90"><span>建议控制在 1200 字以内</span><span>{optimizationDraft.length}/1500</span></div></div>
                 </>
               ) : (
                 <div className="flex min-h-[540px] items-center justify-center p-6 text-sm text-muted-foreground">暂无 Topic 数据。</div>
