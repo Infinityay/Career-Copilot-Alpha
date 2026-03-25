@@ -3,6 +3,7 @@ import type {
   ReviewReportStatus,
   ReviewSessionDetail,
   ReviewTopic,
+  ReviewTopicDetail,
 } from "../types/interviewReview";
 
 type TranscriptBucket = { assistant: string[]; user: string[] };
@@ -130,7 +131,7 @@ function buildTopic(
   round: MockInterviewRound,
   index: number,
   bucket: TranscriptBucket
-): ReviewTopic {
+): ReviewTopicDetail {
   const answerHighlights = bucket.user.slice(0, 3);
   const fallbackAnswers =
     answerHighlights.length > 0 ? answerHighlights : [`当前主题 ${round.topic} 还没有足够的候选人回答沉淀。`];
@@ -143,6 +144,10 @@ function buildTopic(
     domain: buildTopicDomain(round.topic),
     score,
     coreQuestion: bucket.assistant[0] ?? round.description,
+    problems:
+      bucket.user.length >= 2
+        ? [`${round.topic} 缺少更明确的量化结果。`, "案例和方法之间的因果关系还可以更清晰。"]
+        : [`${round.topic} 的回答展开不足。`, "缺少足够多的真实场景细节。"],
     assessmentFocus: highlightedPoints,
     answerHighlights: fallbackAnswers,
     highlightedPoints,
@@ -189,9 +194,18 @@ export function buildInterviewReviewFromSnapshot(
 ): ReviewSessionDetail {
   const outline = buildOutlineForReview(snapshot);
   const buckets = splitMessagesByOutline(snapshot, outline);
-  const topics = outline.map((round, index) =>
+  const topicDetails = outline.map((round, index) =>
     buildTopic(snapshot.sessionId, round, index, buckets[index] ?? { assistant: [], user: [] })
   );
+  const topics: ReviewTopic[] = topicDetails.map((topic) => ({
+    id: topic.id,
+    name: topic.name,
+    domain: topic.domain,
+    score: topic.score,
+    coreQuestion: topic.coreQuestion,
+    evaluation: topic.evaluation,
+    problems: topic.problems,
+  }));
   const overallScore = Math.round(
     topics.reduce((sum, topic) => sum + topic.score, 0) / Math.max(topics.length, 1)
   );
@@ -221,6 +235,7 @@ export function buildInterviewReviewFromSnapshot(
     ],
     priority: `优先补强 ${weakest?.name ?? "当前弱项"}，并把 ${strongest?.name ?? "强项"} 的回答模板复用到其他 Topic。`,
     topics,
+    topicDetails: Object.fromEntries(topicDetails.map((topic) => [topic.id, topic])),
   };
 }
 

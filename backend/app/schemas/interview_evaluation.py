@@ -44,6 +44,17 @@ class EvaluationTopicAssessment(BaseModel):
     overallScore: int = Field(ge=0, le=100)
 
 
+class EvaluationTopicPreview(BaseModel):
+    """Lightweight preview for one interview topic/round."""
+
+    topic: str
+    question: str = Field(default="")
+    previewSummary: str = Field(default="")
+    keyIssues: list[str] = Field(default_factory=list)
+    rubricScores: list[EvaluationRubricScore] = Field(default_factory=list)
+    overallScore: int = Field(ge=0, le=100)
+
+
 class InterviewEvaluationReport(BaseModel):
     """Structured evaluation result returned by the evaluation agent."""
 
@@ -101,3 +112,13 @@ class InterviewSummaryEvaluationInput(BaseModel):
     jdData: JDData | None = None
     resumeSnapshot: ResumeData
     topicAssessments: list[EvaluationTopicAssessment] = Field(default_factory=list)
+
+
+class InterviewPreviewSummaryInput(BaseModel):
+    """Summary input built from lightweight topic previews."""
+
+    sessionId: str
+    jdText: str = Field(default="")
+    jdData: JDData | None = None
+    resumeSnapshot: ResumeData
+    topicPreviews: list[EvaluationTopicPreview] = Field(default_factory=list)

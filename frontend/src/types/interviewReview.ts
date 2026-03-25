@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from "../lib/api";
+import type { MockInterviewSessionSnapshot } from "./mockInterview";
 
 export type ReviewReportStatus = "pending" | "ready";
 
@@ -15,11 +16,15 @@ export type ReviewTopic = {
   domain: string;
   score: number;
   coreQuestion: string;
+  evaluation: string;
+  problems: string[];
+};
+
+export type ReviewTopicDetail = ReviewTopic & {
   assessmentFocus: string[];
   answerHighlights: string[];
   highlightedPoints: string[];
   matchedAnswers: ReviewMatchedAnswer[];
-  evaluation: string;
   strengths: string[];
   weaknesses: string[];
   suggestions: string[];
@@ -52,6 +57,7 @@ export type ReviewSessionDetail = {
   risks: string[];
   priority: string;
   topics: ReviewTopic[];
+  topicDetails: Record<string, ReviewTopicDetail>;
 };
 
 export type ReviewSession = ReviewSessionDetail;
@@ -93,9 +99,21 @@ export type ReviewOptimizationRequest = {
   sessionId: string;
   topicId: string;
   message: string;
-  topic?: ReviewTopic;
+  topic?: ReviewTopicDetail;
   conversation?: ReviewConversationMessage[];
   runtimeConfig?: RuntimeConfig;
+};
+
+export type ReviewGenerateTopicDetailRequest = {
+  sessionId: string;
+  snapshot?: MockInterviewSessionSnapshot | null;
+  runtimeConfig?: RuntimeConfig;
+};
+
+export type ReviewGenerateTopicDetailResponse = {
+  sessionId: string;
+  topicId: string;
+  topic: ReviewTopicDetail;
 };
 
 export type ReviewOptimizationResponse = {

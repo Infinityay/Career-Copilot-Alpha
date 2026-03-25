@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 from functools import lru_cache
+import time
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,11 +16,12 @@ from app.core.config import get_settings
 from app.prompts.interview_review_prompts import get_interview_review_prompts
 from app.schemas.interview_evaluation import (
     EvaluationFocusJudgment,
+    EvaluationTopicPreview,
     EvaluationRubricScore,
     EvaluationTopicAssessment,
     InterviewEvaluationAgentInput,
-    InterviewEvaluationReport,
     InterviewEvaluationSummary,
+    InterviewPreviewSummaryInput,
     InterviewSummaryEvaluationInput,
     InterviewTopicEvaluationInput,
 )
@@ -28,7 +30,19 @@ from app.utils.structured_output import invoke_with_fallback
 
 
 logger = logging.getLogger(__name__)
-MAX_TOPIC_EVALUATION_CONCURRENCY = 3
+MAX_TOPIC_EVALUATION_CONCURRENCY = 2
+TOPIC_EVALUATION_RETRY_DELAY_SECONDS = 1.0
+TOPIC_EVALUATION_RETRYABLE_MARKERS = (
+    "429",
+    "502",
+    "504",
+    "bad gateway",
+    "gateway time-out",
+    "gateway timeout",
+    "rate limit",
+    "temporarily unavailable",
+    "service unavailable",
+)
 
 
 class InterviewEvaluationAgent:
@@ -77,6 +91,9 @@ class InterviewEvaluationAgent:
         self.topic_evaluation_llm = self.chat_model.with_structured_output(
             EvaluationTopicAssessment
         )
+        self.topic_preview_llm = self.chat_model.with_structured_output(
+            EvaluationTopicPreview
+        )
         self.summary_evaluation_llm = self.chat_model.with_structured_output(
             InterviewEvaluationSummary
         )
@@ -122,38 +139,22 @@ class InterviewEvaluationAgent:
             HumanMessage(content=f"topic_assessment_summary_input:\n{serialized}"),
         ]
 
-    def evaluate(
-        self, payload: InterviewEvaluationAgentInput
-    ) -> InterviewEvaluationReport:
-        try:
-            topic_inputs = self._build_topic_inputs(payload)
-            topic_assessments = self._evaluate_topics(topic_inputs)
-            summary_input = InterviewSummaryEvaluationInput(
-                sessionId=payload.sessionId,
-                jdText=payload.jdText,
-                jdData=payload.jdData,
-                resumeSnapshot=payload.resumeSnapshot,
-                topicAssessments=topic_assessments,
-            )
-            summary = self._evaluate_summary(summary_input)
-            return InterviewEvaluationReport(
-                summary=summary.summary,
-                overallScore=summary.overallScore,
-                recommendation=summary.recommendation,
-                strengths=summary.strengths,
-                risks=summary.risks,
-                priorityActions=summary.priorityActions,
-                topicAssessments=topic_assessments,
-            )
-        except Exception:
-            logger.exception(
-                "Interview evaluation failed for session %s, using fallback report",
-                payload.sessionId,
-            )
-            return self._build_fallback_report(payload)
+    def _build_topic_preview_messages(self, payload: InterviewTopicEvaluationInput):
+        serialized = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, indent=2)
+        return [
+            SystemMessage(content=self.prompts["topic_preview"]),
+            HumanMessage(content=f"topic_interview_slice:\n{serialized}"),
+        ]
 
-    def evaluate_with_progress(self, payload: InterviewEvaluationAgentInput):
-        """Yield progress updates while building the final interview evaluation report."""
+    def _build_preview_summary_messages(self, payload: InterviewPreviewSummaryInput):
+        serialized = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, indent=2)
+        return [
+            SystemMessage(content=self.prompts["summary_evaluation"]),
+            HumanMessage(content=f"topic_preview_summary_input:\n{serialized}"),
+        ]
+
+    def evaluate_previews_with_progress(self, payload: InterviewEvaluationAgentInput):
+        """Yield progress updates while building preview-only interview review data."""
         try:
             topic_inputs = self._build_topic_inputs(payload)
             total_topics = len(topic_inputs)
@@ -163,10 +164,10 @@ class InterviewEvaluationAgent:
                 "totalTopics": total_topics,
             }
 
-            topic_assessments: list[EvaluationTopicAssessment | None] = [None] * total_topics
+            topic_previews: list[EvaluationTopicPreview | None] = [None] * total_topics
             completed_topics = 0
-            for topic_index, assessment in self._evaluate_topics_with_progress(topic_inputs):
-                topic_assessments[topic_index] = assessment
+            for topic_index, preview in self._evaluate_topic_previews_with_progress(topic_inputs):
+                topic_previews[topic_index] = preview
                 completed_topics += 1
                 topic_input = topic_inputs[topic_index]
                 yield {
@@ -174,44 +175,76 @@ class InterviewEvaluationAgent:
                     "sessionId": payload.sessionId,
                     "currentTopic": completed_topics,
                     "totalTopics": total_topics,
-                    "topicName": assessment.topic or topic_input.topic,
+                    "topicName": preview.topic or topic_input.topic,
                     "topicIndex": topic_index + 1,
+                    "preview": preview,
                 }
 
-            finalized_assessments = [
-                assessment for assessment in topic_assessments if assessment is not None
+            finalized_previews = [
+                preview for preview in topic_previews if preview is not None
             ]
-            summary_input = InterviewSummaryEvaluationInput(
+            summary_input = InterviewPreviewSummaryInput(
                 sessionId=payload.sessionId,
                 jdText=payload.jdText,
                 jdData=payload.jdData,
                 resumeSnapshot=payload.resumeSnapshot,
-                topicAssessments=finalized_assessments,
+                topicPreviews=finalized_previews,
             )
-            summary = self._evaluate_summary(summary_input)
+            summary = self._evaluate_preview_summary(summary_input)
             yield {
                 "type": "done",
                 "sessionId": payload.sessionId,
-                "report": InterviewEvaluationReport(
-                    summary=summary.summary,
-                    overallScore=summary.overallScore,
-                    recommendation=summary.recommendation,
-                    strengths=summary.strengths,
-                    risks=summary.risks,
-                    priorityActions=summary.priorityActions,
-                    topicAssessments=finalized_assessments,
-                ),
+                "report": {
+                    "summary": summary.summary,
+                    "overallScore": summary.overallScore,
+                    "recommendation": summary.recommendation,
+                    "strengths": summary.strengths,
+                    "risks": summary.risks,
+                    "priorityActions": summary.priorityActions,
+                    "topicPreviews": finalized_previews,
+                },
             }
         except Exception:
             logger.exception(
-                "Interview evaluation failed for session %s, using fallback report",
+                "Interview preview generation failed for session %s, using fallback preview report",
                 payload.sessionId,
+            )
+            fallback_previews = [
+                self._build_fallback_topic_preview(topic_input)
+                for topic_input in self._build_topic_inputs(payload)
+            ]
+            summary = self._build_fallback_preview_summary(
+                InterviewPreviewSummaryInput(
+                    sessionId=payload.sessionId,
+                    jdText=payload.jdText,
+                    jdData=payload.jdData,
+                    resumeSnapshot=payload.resumeSnapshot,
+                    topicPreviews=fallback_previews,
+                )
             )
             yield {
                 "type": "done",
                 "sessionId": payload.sessionId,
-                "report": self._build_fallback_report(payload),
+                "report": {
+                    "summary": summary.summary,
+                    "overallScore": summary.overallScore,
+                    "recommendation": summary.recommendation,
+                    "strengths": summary.strengths,
+                    "risks": summary.risks,
+                    "priorityActions": summary.priorityActions,
+                    "topicPreviews": fallback_previews,
+                },
             }
+
+    def evaluate_topic_detail(
+        self, payload: InterviewTopicEvaluationInput
+    ) -> EvaluationTopicAssessment:
+        return self._evaluate_topic(payload)
+
+    def build_topic_inputs(
+        self, payload: InterviewEvaluationAgentInput
+    ) -> list[InterviewTopicEvaluationInput]:
+        return self._build_topic_inputs(payload)
 
     def _build_topic_inputs(
         self, payload: InterviewEvaluationAgentInput
@@ -306,51 +339,49 @@ class InterviewEvaluationAgent:
             ),
         )
 
-    def _evaluate_topics(
-        self, topic_inputs: list[InterviewTopicEvaluationInput]
-    ) -> list[EvaluationTopicAssessment]:
-        if len(topic_inputs) <= 1:
-            return [self._evaluate_topic(topic_input) for topic_input in topic_inputs]
-
-        results: list[EvaluationTopicAssessment | None] = [None] * len(topic_inputs)
-        max_workers = self._max_topic_concurrency(len(topic_inputs))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self._evaluate_topic, topic_input): index
-                for index, topic_input in enumerate(topic_inputs)
-            }
-            for future in as_completed(futures):
-                index = futures[future]
-                results[index] = future.result()
-
-        return [result for result in results if result is not None]
-
-    def _evaluate_topics_with_progress(
+    def _evaluate_topic_previews_with_progress(
         self, topic_inputs: list[InterviewTopicEvaluationInput]
     ):
         if len(topic_inputs) <= 1:
             for index, topic_input in enumerate(topic_inputs):
-                yield index, self._evaluate_topic(topic_input)
+                yield index, self._evaluate_topic_preview(topic_input)
             return
 
         max_workers = self._max_topic_concurrency(len(topic_inputs))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._evaluate_topic, topic_input): index
+                executor.submit(self._evaluate_topic_preview, topic_input): index
                 for index, topic_input in enumerate(topic_inputs)
             }
             for future in as_completed(futures):
                 yield futures[future], future.result()
 
+    def _evaluate_topic_preview(
+        self, payload: InterviewTopicEvaluationInput
+    ) -> EvaluationTopicPreview:
+        try:
+            result = self._invoke_with_retry(
+                label="Topic preview evaluation",
+                payload=payload,
+                invoke_fn=lambda: self._invoke_topic_preview(payload),
+            )
+            return result or self._build_fallback_topic_preview(payload)
+        except Exception:
+            logger.exception(
+                "Topic preview evaluation failed for session %s round %s, using fallback topic preview",
+                payload.sessionId,
+                payload.roundNumber,
+            )
+            return self._build_fallback_topic_preview(payload)
+
     def _evaluate_topic(
         self, payload: InterviewTopicEvaluationInput
     ) -> EvaluationTopicAssessment:
-        messages = self._build_topic_messages(payload)
         try:
-            result = invoke_with_fallback(
-                self.topic_evaluation_llm,
-                messages,
-                EvaluationTopicAssessment,
+            result = self._invoke_with_retry(
+                label="Topic evaluation",
+                payload=payload,
+                invoke_fn=lambda: self._invoke_topic_evaluation(payload),
             )
             return result or self._build_fallback_topic_assessment(payload)
         except Exception:
@@ -360,6 +391,54 @@ class InterviewEvaluationAgent:
                 payload.roundNumber,
             )
             return self._build_fallback_topic_assessment(payload)
+
+    def _invoke_with_retry(self, label: str, payload: InterviewTopicEvaluationInput, invoke_fn):
+        try:
+            return invoke_fn()
+        except Exception as exc:
+            if self._is_retryable_topic_error(exc):
+                logger.warning(
+                    "%s transient failure for session %s round %s, retrying once",
+                    label,
+                    payload.sessionId,
+                    payload.roundNumber,
+                )
+                time.sleep(TOPIC_EVALUATION_RETRY_DELAY_SECONDS)
+                try:
+                    return invoke_fn()
+                except Exception:
+                    logger.exception(
+                        "%s retry failed for session %s round %s",
+                        label,
+                        payload.sessionId,
+                        payload.roundNumber,
+                    )
+                    raise
+            raise
+
+    def _invoke_topic_evaluation(
+        self, payload: InterviewTopicEvaluationInput
+    ) -> EvaluationTopicAssessment | None:
+        messages = self._build_topic_messages(payload)
+        return invoke_with_fallback(
+            self.topic_evaluation_llm,
+            messages,
+            EvaluationTopicAssessment,
+        )
+
+    def _invoke_topic_preview(
+        self, payload: InterviewTopicEvaluationInput
+    ) -> EvaluationTopicPreview | None:
+        messages = self._build_topic_preview_messages(payload)
+        return invoke_with_fallback(
+            self.topic_preview_llm,
+            messages,
+            EvaluationTopicPreview,
+        )
+
+    def _is_retryable_topic_error(self, exc: Exception) -> bool:
+        error_text = f"{type(exc).__name__}: {exc}".lower()
+        return any(marker in error_text for marker in TOPIC_EVALUATION_RETRYABLE_MARKERS)
 
     def _evaluate_summary(
         self, payload: InterviewSummaryEvaluationInput
@@ -378,6 +457,24 @@ class InterviewEvaluationAgent:
                 payload.sessionId,
             )
             return self._build_fallback_summary(payload)
+
+    def _evaluate_preview_summary(
+        self, payload: InterviewPreviewSummaryInput
+    ) -> InterviewEvaluationSummary:
+        messages = self._build_preview_summary_messages(payload)
+        try:
+            result = invoke_with_fallback(
+                self.summary_evaluation_llm,
+                messages,
+                InterviewEvaluationSummary,
+            )
+            return result or self._build_fallback_preview_summary(payload)
+        except Exception:
+            logger.exception(
+                "Preview summary evaluation failed for session %s, using fallback summary",
+                payload.sessionId,
+            )
+            return self._build_fallback_preview_summary(payload)
 
     def _build_fallback_topic_assessment(
         self, payload: InterviewTopicEvaluationInput
@@ -430,6 +527,40 @@ class InterviewEvaluationAgent:
             overallScore=score,
         )
 
+    def _build_fallback_topic_preview(
+        self, payload: InterviewTopicEvaluationInput
+    ) -> EvaluationTopicPreview:
+        answers = [message.content for message in payload.transcript if message.role == "user"]
+        score = self._score_answers(answers)
+        return EvaluationTopicPreview(
+            topic=payload.topic,
+            question=payload.question or payload.topicDescription,
+            previewSummary=(
+                f"{payload.topic} 当前已有基础回答。"
+                if answers
+                else f"{payload.topic} 当前回答信息不足，首屏结论仅供参考。"
+            ),
+            keyIssues=self._build_weaknesses(payload.topic, answers)[:2],
+            rubricScores=[
+                EvaluationRubricScore(
+                    name="structured_thinking",
+                    score=score,
+                    reason="fallback based on answer completeness",
+                ),
+                EvaluationRubricScore(
+                    name="communication",
+                    score=score,
+                    reason="fallback based on answer completeness",
+                ),
+                EvaluationRubricScore(
+                    name="domain_judgment",
+                    score=score,
+                    reason="fallback based on answer completeness",
+                ),
+            ],
+            overallScore=score,
+        )
+
     def _build_fallback_summary(
         self, payload: InterviewSummaryEvaluationInput
     ) -> InterviewEvaluationSummary:
@@ -461,30 +592,34 @@ class InterviewEvaluationAgent:
             ],
         )
 
-    def _build_fallback_report(
-        self, payload: InterviewEvaluationAgentInput
-    ) -> InterviewEvaluationReport:
-        topic_assessments = [
-            self._build_fallback_topic_assessment(topic_input)
-            for topic_input in self._build_topic_inputs(payload)
-        ]
-        summary = self._build_fallback_summary(
-            InterviewSummaryEvaluationInput(
-                sessionId=payload.sessionId,
-                jdText=payload.jdText,
-                jdData=payload.jdData,
-                resumeSnapshot=payload.resumeSnapshot,
-                topicAssessments=topic_assessments,
-            )
+    def _build_fallback_preview_summary(
+        self, payload: InterviewPreviewSummaryInput
+    ) -> InterviewEvaluationSummary:
+        overall_score = round(
+            sum(item.overallScore for item in payload.topicPreviews)
+            / max(len(payload.topicPreviews), 1)
         )
-        return InterviewEvaluationReport(
-            summary=summary.summary,
-            overallScore=summary.overallScore,
-            recommendation=summary.recommendation,
-            strengths=summary.strengths,
-            risks=summary.risks,
-            priorityActions=summary.priorityActions,
-            topicAssessments=topic_assessments,
+        weakest = min(
+            payload.topicPreviews,
+            key=lambda item: item.overallScore,
+            default=None,
+        )
+        return InterviewEvaluationSummary(
+            summary="已生成首屏复盘预览。当前结果优先展示整体表现和各 topic 的关键问题，详细拆解可按需继续生成。",
+            overallScore=overall_score,
+            recommendation="先查看整体 summary，再按优先级展开低分 topic 的深度分析。",
+            strengths=[
+                "已形成跨 topic 的快速复盘视图。",
+                "可优先定位需要深挖的关键题目。",
+            ],
+            risks=[
+                "当前首屏只展示轻量预览，不包含完整采分细节。",
+                "详细建议需在单 topic 深度分析中进一步展开。",
+            ],
+            priorityActions=[
+                f"优先展开 {weakest.topic if weakest else '低分 topic'} 的深度分析。",
+                "优先补强回答中的真实案例、量化结果和关键取舍。",
+            ],
         )
 
     @staticmethod

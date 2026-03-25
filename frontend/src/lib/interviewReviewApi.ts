@@ -9,17 +9,19 @@ import type {
   ReviewConversationMessage,
   ReviewExportReportResponse,
   ReviewGenerateReportResponse,
+  ReviewGenerateTopicDetailResponse,
   ReviewOptimizationRequest,
   ReviewOptimizationResponse,
   ReviewSessionDetail,
   ReviewSessionListItem,
   ReviewTopic,
+  ReviewTopicDetail,
 } from "../types/interviewReview";
 
-const REPORT_STORAGE_KEY = "face-tomato-interview-review-reports-v2";
-const CONVERSATION_STORAGE_KEY = "face-tomato-interview-review-conversations-v2";
-const GENERATING_STORAGE_KEY = "face-tomato-interview-review-generating-v1";
-const GENERATING_PROGRESS_STORAGE_KEY = "face-tomato-interview-review-generating-progress-v1";
+const REPORT_STORAGE_KEY = "face-tomato-interview-review-reports-v3";
+const CONVERSATION_STORAGE_KEY = "face-tomato-interview-review-conversations-v3";
+const GENERATING_STORAGE_KEY = "face-tomato-interview-review-generating-v2";
+const GENERATING_PROGRESS_STORAGE_KEY = "face-tomato-interview-review-generating-progress-v2";
 
 type StoredReports = Record<string, ReviewSessionDetail>;
 type StoredConversations = Record<string, ReviewConversationMessage[]>;
@@ -30,49 +32,37 @@ export type InterviewReviewGenerationProgress = {
   currentTopic: number;
   topicName: string;
   status: "starting" | "running";
+  completedTopics: ReviewTopic[];
 };
 type StoredGeneratingProgress = Record<string, InterviewReviewGenerationProgress>;
 
 const inFlightReviewGenerations = new Map<string, Promise<ReviewGenerateReportResponse>>();
-
-const assessmentFocusFallbackMap: Record<string, string> = {
-  structured_thinking: "考察候选人是否有结构化拆解复杂问题的能力",
-  communication: "考察候选人是否能清晰、准确地表达自己的思路和结论",
-  domain_judgment: "考察候选人是否能说明关键技术或业务取舍及其原因",
-  evidence_and_metrics: "考察是否能用量化结果或验证证据证明项目效果",
-  authenticity: "考察回答是否基于真实经历，并且细节是否可信",
-};
-
-function buildAssessmentFocusFallback(topic: ReviewTopic): string[] {
-  const rubricFocus = topic.highlightedPoints
-    .map((point) => assessmentFocusFallbackMap[point])
-    .filter((focus): focus is string => Boolean(focus));
-
-  if (rubricFocus.length > 0) {
-    return rubricFocus;
-  }
-
-  if (topic.coreQuestion.trim()) {
-    return [
-      `考察候选人是否能围绕“${topic.coreQuestion.trim()}”给出结构化回答`,
-      "考察候选人是否能结合真实案例说明分析过程、动作和结果",
-    ];
-  }
-
-  return ["考察候选人是否能给出结构化、可信且可验证的回答"];
-}
+const inFlightTopicDetailGenerations = new Map<string, Promise<ReviewGenerateTopicDetailResponse>>();
 
 function normalizeReviewDetail(detail: ReviewSessionDetail): ReviewSessionDetail {
   return {
     ...detail,
     topics: detail.topics.map((topic) => ({
       ...topic,
-      assessmentFocus: Array.isArray((topic as ReviewTopic & { assessmentFocus?: string[] }).assessmentFocus)
-        ? ((topic as ReviewTopic & { assessmentFocus?: string[] }).assessmentFocus?.filter(Boolean).length
-            ? (topic as ReviewTopic & { assessmentFocus?: string[] }).assessmentFocus ?? []
-            : buildAssessmentFocusFallback(topic))
-        : buildAssessmentFocusFallback(topic),
+      problems: Array.isArray(topic.problems) ? topic.problems.filter(Boolean) : [],
     })),
+    topicDetails: Object.fromEntries(
+      Object.entries(detail.topicDetails ?? {}).map(([topicId, topic]) => [
+        topicId,
+        {
+          ...topic,
+          problems: Array.isArray(topic.problems) ? topic.problems.filter(Boolean) : [],
+          assessmentFocus: Array.isArray(topic.assessmentFocus) ? topic.assessmentFocus.filter(Boolean) : [],
+          answerHighlights: Array.isArray(topic.answerHighlights) ? topic.answerHighlights.filter(Boolean) : [],
+          highlightedPoints: Array.isArray(topic.highlightedPoints) ? topic.highlightedPoints.filter(Boolean) : [],
+          matchedAnswers: Array.isArray(topic.matchedAnswers) ? topic.matchedAnswers : [],
+          strengths: Array.isArray(topic.strengths) ? topic.strengths.filter(Boolean) : [],
+          weaknesses: Array.isArray(topic.weaknesses) ? topic.weaknesses.filter(Boolean) : [],
+          suggestions: Array.isArray(topic.suggestions) ? topic.suggestions.filter(Boolean) : [],
+          followUps: Array.isArray(topic.followUps) ? topic.followUps.filter(Boolean) : [],
+        } satisfies ReviewTopicDetail,
+      ])
+    ),
   };
 }
 
@@ -128,6 +118,28 @@ function unmarkGeneratingSession(sessionId: string) {
     delete progress[sessionId];
     writeGeneratingProgress(progress);
   }
+}
+
+export function resetInterviewReviewSession(sessionId: string) {
+  const reports = readStoredReports();
+  if (reports[sessionId]) {
+    delete reports[sessionId];
+    writeStoredReports(reports);
+  }
+
+  const conversations = readStoredConversations();
+  const nextConversations = Object.fromEntries(
+    Object.entries(conversations).filter(([key]) => !key.startsWith(`${sessionId}:`))
+  );
+  writeStoredConversations(nextConversations);
+
+  inFlightReviewGenerations.delete(sessionId);
+  for (const key of [...inFlightTopicDetailGenerations.keys()]) {
+    if (key.startsWith(`${sessionId}:`)) {
+      inFlightTopicDetailGenerations.delete(key);
+    }
+  }
+  unmarkGeneratingSession(sessionId);
 }
 
 export function isInterviewReviewReportGenerating(sessionId: string): boolean {
@@ -236,6 +248,7 @@ function buildPendingDetail(snapshot: MockInterviewSessionSnapshot): ReviewSessi
     risks: [],
     priority: "先生成复盘报告，再查看按 Topic 拆解的评价与建议。",
     topics: [],
+    topicDetails: {},
   };
 }
 
@@ -270,12 +283,53 @@ function updateInterviewReviewGenerationProgress(progress: InterviewReviewGenera
   writeGeneratingProgress(current);
 }
 
-function parseNdjsonLines(buffer: string): { lines: string[]; rest: string } {
-  const parts = buffer.split("\n");
-  return {
-    lines: parts.slice(0, -1).filter(Boolean),
-    rest: parts.length > 0 ? parts[parts.length - 1] ?? "" : "",
-  };
+function mergeGeneratedTopic(topics: ReviewTopic[], incomingTopic: ReviewTopic): ReviewTopic[] {
+  const next = topics.filter((topic) => topic.id !== incomingTopic.id);
+  next.push(incomingTopic);
+  next.sort((left, right) => left.id.localeCompare(right.id, undefined, { numeric: true }));
+  return next;
+}
+
+export function mergeInterviewReviewProgressIntoDetail(
+  detail: ReviewSessionDetail | null,
+  progress: InterviewReviewGenerationProgress | null
+): ReviewSessionDetail | null {
+  if (!detail || !progress || progress.completedTopics.length === 0) {
+    return detail;
+  }
+  const topics = progress.completedTopics.reduce<ReviewTopic[]>(
+    (current, topic) => mergeGeneratedTopic(current, topic),
+    detail.topics
+  );
+  return normalizeReviewDetail({
+    ...detail,
+    topics,
+    defaultSelectedTopicId: detail.defaultSelectedTopicId ?? topics[0]?.id ?? null,
+    topicDetails: detail.topicDetails ?? {},
+  });
+}
+
+type SseEvent = {
+  event: string;
+  data: string;
+};
+
+function parseSseEvents(buffer: string): { events: SseEvent[]; rest: string } {
+  const frames = buffer.split("\n\n");
+  const rest = frames.pop() ?? "";
+  const events = frames
+    .map((frame) => {
+      const lines = frame.split("\n");
+      const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "message";
+      const data = lines
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      return { event, data };
+    })
+    .filter((item) => item.data.length > 0);
+
+  return { events, rest };
 }
 
 export function getInterviewReviewTopicCount(
@@ -303,7 +357,11 @@ export function getInterviewReviewSessionDetailSnapshot(sessionId: string): Revi
   }
 
   const snapshot = getSnapshotBySessionId(sessionId);
-  return snapshot ? buildPendingDetail(snapshot) : null;
+  const pendingDetail = snapshot ? buildPendingDetail(snapshot) : null;
+  return mergeInterviewReviewProgressIntoDetail(
+    pendingDetail,
+    getInterviewReviewGenerationProgress(sessionId)
+  );
 }
 
 export async function fetchInterviewReviewSessions(): Promise<ReviewSessionListItem[]> {
@@ -390,13 +448,20 @@ export async function generateInterviewReviewReport(
           break;
         }
         buffer += decoder.decode(value, { stream: true });
-        const parsed = parseNdjsonLines(buffer);
+        const parsed = parseSseEvents(buffer);
         buffer = parsed.rest;
 
-        for (const line of parsed.lines) {
-          const event = JSON.parse(line) as
+        for (const item of parsed.events) {
+          const event = JSON.parse(item.data) as
             | { type: "start"; sessionId: string; totalTopics: number }
-            | { type: "topic_complete"; sessionId: string; currentTopic: number; totalTopics: number; topicName: string }
+            | {
+                type: "topic_complete";
+                sessionId: string;
+                currentTopic: number;
+                totalTopics: number;
+                topicName: string;
+                preview: ReviewTopic;
+              }
             | { type: "done"; sessionId: string; reportStatus: "ready"; detail: ReviewSessionDetail }
             | { type: "error"; sessionId: string; message: string }
             | { type: "not_found"; sessionId: string };
@@ -408,6 +473,7 @@ export async function generateInterviewReviewReport(
               currentTopic: 0,
               topicName: "",
               status: "starting",
+              completedTopics: [],
             };
             updateInterviewReviewGenerationProgress(progress);
             options?.onProgress?.(progress);
@@ -415,12 +481,17 @@ export async function generateInterviewReviewReport(
           }
 
           if (event.type === "topic_complete") {
+            const currentProgress = getInterviewReviewGenerationProgress(sessionId);
             const progress: InterviewReviewGenerationProgress = {
               sessionId,
               totalTopics: event.totalTopics,
               currentTopic: event.currentTopic,
               topicName: event.topicName,
               status: "running",
+              completedTopics: mergeGeneratedTopic(
+                currentProgress?.completedTopics ?? [],
+                event.preview
+              ),
             };
             updateInterviewReviewGenerationProgress(progress);
             options?.onProgress?.(progress);
@@ -455,33 +526,36 @@ export async function generateInterviewReviewReport(
 
       const tail = buffer.trim();
       if (tail) {
-        const event = JSON.parse(tail) as
-          | { type: "done"; sessionId: string; reportStatus: "ready"; detail: ReviewSessionDetail }
-          | { type: "error"; sessionId: string; message: string }
-          | { type: "not_found"; sessionId: string };
+        const parsedTail = parseSseEvents(`${tail}\n\n`);
+        for (const item of parsedTail.events) {
+          const event = JSON.parse(item.data) as
+            | { type: "done"; sessionId: string; reportStatus: "ready"; detail: ReviewSessionDetail }
+            | { type: "error"; sessionId: string; message: string }
+            | { type: "not_found"; sessionId: string };
 
-        if (event.type === "done") {
-          console.info("[interview-review] POST /generate succeeded", {
-            sessionId,
-            reportStatus: event.reportStatus,
-          });
-          const detail = normalizeReviewDetail(event.detail);
-          const reports = readStoredReports();
-          reports[sessionId] = detail;
-          writeStoredReports(reports);
-          return {
-            sessionId: event.sessionId,
-            reportStatus: event.reportStatus,
-            detail,
-          };
-        }
+          if (event.type === "done") {
+            console.info("[interview-review] POST /generate succeeded", {
+              sessionId,
+              reportStatus: event.reportStatus,
+            });
+            const detail = normalizeReviewDetail(event.detail);
+            const reports = readStoredReports();
+            reports[sessionId] = detail;
+            writeStoredReports(reports);
+            return {
+              sessionId: event.sessionId,
+              reportStatus: event.reportStatus,
+              detail,
+            };
+          }
 
-        if (event.type === "error") {
-          throw new Error(event.message || "生成复盘失败");
-        }
+          if (event.type === "error") {
+            throw new Error(event.message || "生成复盘失败");
+          }
 
-        if (event.type === "not_found") {
-          throw new Error("Mock interview session not found");
+          if (event.type === "not_found") {
+            throw new Error("Mock interview session not found");
+          }
         }
       }
 
@@ -506,6 +580,70 @@ export async function exportInterviewReviewReport(sessionId: string): Promise<Re
   }
 
   return (await response.json()) as ReviewExportReportResponse;
+}
+
+export function getInterviewReviewTopicDetailSnapshot(
+  sessionId: string,
+  topicId: string
+): ReviewTopicDetail | null {
+  return readStoredReports()[sessionId]?.topicDetails?.[topicId] ?? null;
+}
+
+function writeInterviewReviewTopicDetail(sessionId: string, topic: ReviewTopicDetail) {
+  const reports = readStoredReports();
+  const session = reports[sessionId];
+  if (!session) {
+    return;
+  }
+  reports[sessionId] = normalizeReviewDetail({
+    ...session,
+    topicDetails: {
+      ...(session.topicDetails ?? {}),
+      [topic.id]: topic,
+    },
+  });
+  writeStoredReports(reports);
+}
+
+export async function generateInterviewReviewTopicDetail(
+  sessionId: string,
+  topicId: string,
+  runtimeConfig?: RuntimeConfig | null
+): Promise<ReviewGenerateTopicDetailResponse> {
+  const existing = inFlightTopicDetailGenerations.get(`${sessionId}:${topicId}`);
+  if (existing) {
+    return existing;
+  }
+
+  const sanitizedRuntimeConfig = sanitizeRuntimeConfig(runtimeConfig);
+  const snapshot = getSnapshotBySessionId(sessionId);
+  const task = (async () => {
+    const response = await fetch(
+      `/api/interview-reviews/${encodeURIComponent(sessionId)}/topics/${encodeURIComponent(topicId)}/generate-detail`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          ...(snapshot ? { snapshot } : {}),
+          ...(sanitizedRuntimeConfig ? { runtimeConfig: sanitizedRuntimeConfig } : {}),
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response));
+    }
+
+    const result = (await response.json()) as ReviewGenerateTopicDetailResponse;
+    writeInterviewReviewTopicDetail(sessionId, result.topic);
+    return result;
+  })().finally(() => {
+    inFlightTopicDetailGenerations.delete(`${sessionId}:${topicId}`);
+  });
+
+  inFlightTopicDetailGenerations.set(`${sessionId}:${topicId}`, task);
+  return task;
 }
 
 export async function optimizeInterviewReviewTopic(
