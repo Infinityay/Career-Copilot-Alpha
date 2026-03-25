@@ -203,6 +203,12 @@ uv run python scripts/build_interview_zvec_index.py
 
 具体条款以仓库根目录的 [LICENSE](./LICENSE) 文件为准。
 
+## LinuxDo
+
+感谢这个社区中佬友无私分享的的各种知识，这对我开发项目帮助很大。
+
+总之，学 AI, 上[LinuxDo](https://linux.do/)!
+
 ## 📈 Star History
 
 <a href="https://www.star-history.com/?repos=Infinityay%2FFaceTomato&type=date&legend=top-left">
