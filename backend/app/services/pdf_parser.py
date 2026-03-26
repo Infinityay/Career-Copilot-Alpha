@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import platform
 import re
 import time
@@ -24,6 +25,8 @@ from app.services.resume_extractor import InvalidResumeContentError, ResumeExtra
 from app.services.runtime_config import ResolvedRuntimeConfig
 from app.utils.structured_output import invoke_with_fallback
 
+logger = logging.getLogger(__name__)
+
 DIRECT_TEXT_EXTENSIONS = {"txt", "md", "docx"}
 OCR_SOURCE_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
 SUPPORTED_EXTENSIONS = DIRECT_TEXT_EXTENSIONS | OCR_SOURCE_EXTENSIONS
@@ -31,6 +34,9 @@ MULTIMODAL_FILE_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
 MULTIMODAL_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png"}
 DIRECT_FILE_SUPPORTED_PROVIDERS = {"openai", "google_genai", "anthropic"}
 DOCX_NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+PDF_IMAGE_RENDER_SCALE = 1.35
+PDF_IMAGE_JPEG_QUALITY = 68
+PDF_IMAGE_RENDER_MAX_PAGES = 6
 
 EXTENSION_TO_MIME: dict[str, str] = {
     "png": "image/png",
@@ -41,10 +47,6 @@ EXTENSION_TO_MIME: dict[str, str] = {
     "md": "text/markdown",
     "txt": "text/plain",
 }
-MIN_PDF_TEXT_CHAR_COUNT = 80
-PDF_IMAGE_RENDER_MAX_PAGES = 5
-PDF_IMAGE_RENDER_SCALE = 1.5
-PDF_IMAGE_JPEG_QUALITY = 75
 
 
 class DirectFileParsingUnsupportedError(RuntimeError):
@@ -128,6 +130,7 @@ async def to_data_uri(file_bytes: bytes, mime_type: str) -> str:
 
 async def call_ocr(file_bytes: bytes, api_key: str, file_extension: str) -> OcrResult:
     """Run GLM OCR on binary document content and return normalized text."""
+    logger.info("resume_parse.ocr.start extension=%s bytes=%s", file_extension, len(file_bytes))
     start_time = time.time()
     client = ZhipuAiClient(api_key=api_key)
     mime_type = await get_mimetype_from_file_bytes(file_bytes, file_extension)
@@ -138,11 +141,18 @@ async def call_ocr(file_bytes: bytes, api_key: str, file_extension: str) -> OcrR
     )
     cleaned_text = _cleand_ocr_text(response)
     elapsed_time = round(time.time() - start_time, 2)
+    logger.info(
+        "resume_parse.ocr.done extension=%s elapsed=%.2fs text_chars=%s",
+        file_extension,
+        elapsed_time,
+        len(cleaned_text),
+    )
     return OcrResult(text=cleaned_text, elapsed_time=elapsed_time)
 
 
 async def extract_text_content(file_bytes: bytes) -> tuple[str, float]:
     """Read plain text content without OCR."""
+    logger.info("resume_parse.text_extract.start bytes=%s", len(file_bytes))
     start_time = time.time()
     try:
         text = file_bytes.decode("utf-8")
@@ -152,6 +162,7 @@ async def extract_text_content(file_bytes: bytes) -> tuple[str, float]:
         except UnicodeDecodeError:
             text = file_bytes.decode("utf-8", errors="ignore")
     elapsed = round(time.time() - start_time, 2)
+    logger.info("resume_parse.text_extract.done elapsed=%.2fs text_chars=%s", elapsed, len(text))
     return text, elapsed
 
 
@@ -169,6 +180,7 @@ def _normalize_docx_paragraph_text(paragraph: ET.Element) -> str:
 
 async def extract_docx_text_content(file_bytes: bytes) -> tuple[str, float]:
     """Read DOCX document.xml text as plain text without OCR."""
+    logger.info("resume_parse.docx_extract.start bytes=%s", len(file_bytes))
     start_time = time.time()
     try:
         with ZipFile(BytesIO(file_bytes)) as archive:
@@ -188,40 +200,8 @@ async def extract_docx_text_content(file_bytes: bytes) -> tuple[str, float]:
             paragraphs.append(text)
 
     elapsed = round(time.time() - start_time, 2)
+    logger.info("resume_parse.docx_extract.done elapsed=%.2fs text_chars=%s", elapsed, len("\n".join(paragraphs)))
     return "\n".join(paragraphs), elapsed
-
-
-def _normalize_extracted_text(text: str) -> str:
-    """Normalize extracted text for downstream validation."""
-    lines = [line.strip() for line in text.splitlines()]
-    return "\n".join(line for line in lines if line)
-
-
-def _count_meaningful_text_chars(text: str) -> int:
-    """Count non-whitespace characters to judge whether extracted text is usable."""
-    return len(re.sub(r"\s+", "", text))
-
-
-async def extract_pdf_text_content(file_bytes: bytes) -> tuple[str, float]:
-    """Read machine-extractable text from PDF content when available."""
-    start_time = time.time()
-    try:
-        from pypdf import PdfReader
-    except ImportError as exc:
-        raise RuntimeError("pypdf is required for local PDF text extraction") from exc
-
-    def _extract() -> str:
-        reader = PdfReader(BytesIO(file_bytes))
-        texts: list[str] = []
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
-            if page_text.strip():
-                texts.append(page_text)
-        return _normalize_extracted_text("\n".join(texts))
-
-    text = await asyncio.to_thread(_extract)
-    elapsed = round(time.time() - start_time, 2)
-    return text, elapsed
 
 
 async def render_pdf_to_image_parts(
@@ -229,43 +209,55 @@ async def render_pdf_to_image_parts(
     max_pages: int = PDF_IMAGE_RENDER_MAX_PAGES,
 ) -> tuple[list[dict], float]:
     """Render a PDF into compressed JPEG image parts for multimodal parsing."""
+    logger.info(
+        "resume_parse.pdf_render.start bytes=%s max_pages=%s scale=%.2f jpeg_quality=%s",
+        len(file_bytes),
+        max_pages,
+        PDF_IMAGE_RENDER_SCALE,
+        PDF_IMAGE_JPEG_QUALITY,
+    )
     start_time = time.time()
-    try:
-        import pypdfium2 as pdfium
-    except ImportError as exc:
-        raise RuntimeError("pypdfium2 is required for PDF image fallback") from exc
 
     def _render() -> list[dict]:
+        import pypdfium2 as pdfium
+
         pdf = pdfium.PdfDocument(file_bytes)
         page_count = min(len(pdf), max_pages)
         image_parts: list[dict] = []
 
-        for page_index in range(page_count):
-            page = pdf[page_index]
-            bitmap = page.render(scale=PDF_IMAGE_RENDER_SCALE)
-            image = bitmap.to_pil()
-            buffer = BytesIO()
-            image.save(
-                buffer,
-                format="JPEG",
-                quality=PDF_IMAGE_JPEG_QUALITY,
-                optimize=True,
-            )
-            encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
-            image_parts.append(
-                {
-                    "type": "image",
-                    "base64": encoded,
-                    "mime_type": "image/jpeg",
-                }
-            )
+        try:
+            for page_index in range(page_count):
+                page = pdf[page_index]
+                bitmap = page.render(scale=PDF_IMAGE_RENDER_SCALE)
+                image = bitmap.to_pil()
+                buffer = BytesIO()
+                image.save(
+                    buffer,
+                    format="JPEG",
+                    quality=PDF_IMAGE_JPEG_QUALITY,
+                    optimize=True,
+                )
+                encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                image_parts.append(
+                    {
+                        "type": "image",
+                        "base64": encoded,
+                        "mime_type": "image/jpeg",
+                    }
+                )
+        finally:
+            if hasattr(pdf, "close"):
+                pdf.close()
 
-        if hasattr(pdf, "close"):
-            pdf.close()
         return image_parts
 
     image_parts = await asyncio.to_thread(_render)
     elapsed = round(time.time() - start_time, 2)
+    logger.info(
+        "resume_parse.pdf_render.done elapsed=%.2fs pages=%s",
+        elapsed,
+        len(image_parts),
+    )
     return image_parts, elapsed
 
 
@@ -394,6 +386,12 @@ class ResumeFileDirectExtractor:
         content_parts: list[dict],
         prompt_text: str,
     ) -> FileDirectExtractionResult:
+        logger.info(
+            "resume_parse.llm_structured.start provider=%s model=%s parts=%s",
+            self.runtime_config.model_provider,
+            self.runtime_config.model,
+            len(content_parts),
+        )
         messages = [
             SystemMessage(content=self.SYSTEM_PROMPT),
             HumanMessage(content=[*content_parts, {"type": "text", "text": prompt_text}]),
@@ -406,6 +404,12 @@ class ResumeFileDirectExtractor:
             lambda: invoke_with_fallback(self.structured_llm, messages, ResumeData),
         )
         elapsed_time = round(time.perf_counter() - start_time, 2)
+        logger.info(
+            "resume_parse.llm_structured.done provider=%s model=%s elapsed=%.2fs",
+            self.runtime_config.model_provider,
+            self.runtime_config.model,
+            elapsed_time,
+        )
         return FileDirectExtractionResult(
             data=result,
             elapsed_time=elapsed_time,
@@ -417,6 +421,12 @@ class ResumeFileDirectExtractor:
         content_parts: list[dict],
         prompt_text: str,
     ) -> bool:
+        logger.info(
+            "resume_parse.llm_validity.start provider=%s model=%s parts=%s",
+            self.runtime_config.model_provider,
+            self.runtime_config.model,
+            len(content_parts),
+        )
         messages = [
             SystemMessage(content=self.SYSTEM_PROMPT),
             HumanMessage(content=[*content_parts, {"type": "text", "text": prompt_text}]),
@@ -430,6 +440,12 @@ class ResumeFileDirectExtractor:
                 messages,
                 ResumeValidityResponse,
             ),
+        )
+        logger.info(
+            "resume_parse.llm_validity.done provider=%s model=%s is_resume=%s",
+            self.runtime_config.model_provider,
+            self.runtime_config.model,
+            validity.isResume,
         )
         return validity.isResume == "Yes"
 
@@ -482,11 +498,8 @@ class ResumeFileDirectExtractor:
             file_extension,
             filename=filename,
         )
-        classify_messages = [
-            file_part,
-        ]
         return await self._invoke_validity(
-            classify_messages,
+            [file_part],
             (
                 f"{RESUME_VALIDITY_PROMPT}\n"
                 "请基于这份文件直接判断是否为正常求职简历。"
@@ -532,10 +545,20 @@ async def parse_resume_document(
 ) -> tuple[ResumeData, DocumentParseResult]:
     """Parse a resume with demo-friendly fallback rules."""
     ext = file_extension.lower()
+    logger.info(
+        "resume_parse.start extension=%s bytes=%s provider=%s model=%s ocr_enabled=%s filename=%s",
+        ext,
+        len(file_bytes),
+        runtime_config.model_provider,
+        runtime_config.model,
+        bool(ocr_api_key),
+        filename,
+    )
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: {ext}")
 
     if ext in DIRECT_TEXT_EXTENSIONS:
+        logger.info("resume_parse.path text_then_llm extension=%s", ext)
         if ext == "docx":
             text, elapsed = await extract_docx_text_content(file_bytes)
         else:
@@ -552,29 +575,24 @@ async def parse_resume_document(
             llm_file_parsing_available=False,
         )
 
-    if ext == "pdf":
-        try:
-            text, elapsed = await extract_pdf_text_content(file_bytes)
-        except RuntimeError:
-            text, elapsed = "", 0.0
-
-        if _count_meaningful_text_chars(text) >= MIN_PDF_TEXT_CHAR_COUNT:
-            extractor.validate_resume_text_or_raise(text)
-            resume_data, llm_elapsed = await asyncio.to_thread(
-                extractor.extract_all, text
-            )
-            return resume_data, DocumentParseResult(
-                text=text,
-                ocr_elapsed=elapsed,
-                llm_elapsed=llm_elapsed,
-                extraction_method="text_then_llm",
-                llm_file_parsing_available=False,
-            )
-
     if ocr_api_key:
+        logger.info("resume_parse.path ocr_then_llm extension=%s", ext)
+        # Prefer file-level validity check before OCR to avoid unnecessary OCR calls.
+        if supports_direct_file_parsing(runtime_config, ext):
+            logger.info("resume_parse.validity_check direct_file_supported extension=%s", ext)
+            direct_extractor = ResumeFileDirectExtractor(runtime_config)
+            is_resume = await direct_extractor.classify_is_resume(
+                file_bytes,
+                ext,
+                filename=filename,
+            )
+            if not is_resume:
+                raise InvalidResumeContentError("上传内容不是一份正常简历，请上传求职简历文件后重试。")
+
         normalized_bytes, normalized_extension = await prepare_binary_for_parsing(file_bytes, ext)
         ocr_result = await call_ocr(normalized_bytes, ocr_api_key, normalized_extension)
-        extractor.validate_resume_text_or_raise(ocr_result.text)
+        if not supports_direct_file_parsing(runtime_config, ext):
+            extractor.validate_resume_text_or_raise(ocr_result.text)
         resume_data, llm_elapsed = await asyncio.to_thread(
             extractor.extract_all, ocr_result.text
         )
@@ -587,19 +605,27 @@ async def parse_resume_document(
         )
 
     if ext == "pdf":
+        logger.info("resume_parse.path pdf_image_then_llm extension=%s", ext)
         if not supports_direct_file_parsing(runtime_config, "png"):
+            logger.warning(
+                "resume_parse.pdf_image_then_llm.unsupported provider=%s model=%s",
+                runtime_config.model_provider,
+                runtime_config.model,
+            )
             raise DirectFileParsingUnsupportedError(
-                "当前模型未明确支持图片解析，且该 PDF 未提取到足够文本。"
+                "当前模型未明确支持图片解析。"
                 "请切换到支持视觉的模型，或提供 OCR Key。"
             )
 
         try:
             image_parts, _render_elapsed = await render_pdf_to_image_parts(file_bytes)
-        except RuntimeError as exc:
+        except Exception as exc:
+            logger.exception("resume_parse.pdf_image_then_llm.render_failed")
             raise DirectFileParsingUnsupportedError(
-                "当前服务缺少 PDF 转图片依赖，且该 PDF 未提取到足够文本。"
+                "当前服务缺少 PDF 转图片依赖。"
                 "请安装 PDF 渲染依赖，或提供 OCR Key。"
             ) from exc
+
         direct_extractor = ResumeFileDirectExtractor(runtime_config)
         image_result = await direct_extractor.extract_from_image_parts(image_parts)
         return image_result.data, DocumentParseResult(
@@ -610,6 +636,7 @@ async def parse_resume_document(
             llm_file_parsing_available=True,
         )
 
+    logger.info("resume_parse.path llm_file_direct extension=%s", ext)
     direct_extractor = ResumeFileDirectExtractor(runtime_config)
     direct_result = await direct_extractor.extract(file_bytes, ext, filename=filename)
     return direct_result.data, DocumentParseResult(
