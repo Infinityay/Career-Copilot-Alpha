@@ -207,7 +207,7 @@ uv run python scripts/build_interview_zvec_index.py
 
 - 感谢 [zvec](https://zvec.org/) 这个项目让我轻松的加入了 rag 功能;
 
-- 感谢 LinuxDo 社区中佬友无私分享的的各种知识，这对我开发项目帮助很大。总之，学 AI, 上[LinuxDo](https://linux.do/)!
+- 感谢 LinuxDo 社区中佬友无私分享的的各种知识，这对我开发项目帮助很大。总之，学 AI, 上 [LinuxDo](https://linux.do/)!
 
 ## 📈 Star History
 
