@@ -23,7 +23,6 @@ dependencies = [
     "openai>=1.68.0",
     "pillow>=11.2.0",
     "python-magic>=0.4.27",
-    "pypdf>=5.4.0",
     "pypdfium2>=4.30.0",
     "zai-sdk>=0.2.2",
 ]

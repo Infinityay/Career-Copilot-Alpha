@@ -78,6 +78,7 @@ async def parse_resume(
 ):
     """Parse uploaded resume file and return structured data."""
     filename, ext = _validate_file(file)
+    logger.info("resume_route.parse.start filename=%s extension=%s size=%s", filename, ext, file.size)
     settings = get_settings()
     max_size = settings.max_upload_mb * 1024 * 1024
 
@@ -108,6 +109,7 @@ async def parse_resume(
                 )
             chunks.append(chunk)
         content = b"".join(chunks)
+        logger.info("resume_route.parse.read_complete filename=%s extension=%s bytes=%s", filename, ext, len(content))
 
         runtime_config = resolve_runtime_config(
             RuntimeConfig(
@@ -116,6 +118,13 @@ async def parse_resume(
                 baseURL=runtime_base_url,
                 model=runtime_model,
             )
+        )
+        logger.info(
+            "resume_route.parse.runtime provider=%s model=%s base_url=%s ocr_enabled=%s",
+            runtime_config.model_provider,
+            runtime_config.model,
+            runtime_config.base_url,
+            bool(resolve_ocr_api_key(runtime_ocr_api_key)),
         )
         extractor = ResumeExtractor.from_runtime_config(runtime_config)
         ocr_api_key = resolve_ocr_api_key(runtime_ocr_api_key)
@@ -129,7 +138,21 @@ async def parse_resume(
                 ocr_api_key=ocr_api_key,
                 filename=filename,
             )
+            logger.info(
+                "resume_route.parse.success filename=%s extension=%s method=%s ocr_elapsed=%.2fs llm_elapsed=%.2fs",
+                filename,
+                ext,
+                parse_result.extraction_method,
+                parse_result.ocr_elapsed,
+                parse_result.llm_elapsed,
+            )
         except DirectFileParsingUnsupportedError as exc:
+            logger.warning(
+                "resume_route.parse.bad_request filename=%s extension=%s code=LLM_FILE_PARSING_UNAVAILABLE message=%s",
+                filename,
+                ext,
+                str(exc),
+            )
             raise HTTPException(
                 status_code=400,
                 detail=_make_error(
@@ -145,11 +168,23 @@ async def parse_resume(
                 ),
             ) from exc
         except InvalidResumeContentError as exc:
+            logger.warning(
+                "resume_route.parse.bad_request filename=%s extension=%s code=INVALID_RESUME_CONTENT message=%s",
+                filename,
+                ext,
+                str(exc),
+            )
             raise HTTPException(
                 status_code=400,
                 detail=_make_error("INVALID_RESUME_CONTENT", str(exc)),
             ) from exc
         except ValueError as exc:
+            logger.warning(
+                "resume_route.parse.bad_request filename=%s extension=%s code=UNSUPPORTED_FILE_TYPE message=%s",
+                filename,
+                ext,
+                str(exc),
+            )
             raise HTTPException(
                 status_code=400,
                 detail=_make_error("UNSUPPORTED_FILE_TYPE", str(exc)),
@@ -173,6 +208,12 @@ async def parse_resume(
             ) from exc
 
         if parse_result.extraction_method not in {"llm_file_direct", "image_then_llm"} and not parse_result.text.strip():
+            logger.warning(
+                "resume_route.parse.bad_request filename=%s extension=%s code=EMPTY_CONTENT method=%s",
+                filename,
+                ext,
+                parse_result.extraction_method,
+            )
             raise HTTPException(
                 status_code=400,
                 detail=_make_error(
