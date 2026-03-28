@@ -4,6 +4,7 @@
 
 | 时间 | 操作 | 说明 |
 |------|------|------|
+| 2026-03-28 | 增量扫描 | 同步首页语义调整：前端 `/` 改为面经题库首页，导航首项调整为题库，`/resume` 保留为简历解析入口 |
 | 2026-03-23 | 增量扫描 | 前端本地持久化执行 cutoff：仅保留 `face-tomato-*` canonical key，移除旧品牌 key 自动迁移与 mock interview snapshot 版本兼容说明 |
 | 2026-03-20 | 增量扫描 | 更新 backend 安装方式：RAG 依赖改为 `rag` 可选依赖，并补充 mock interview 在未安装 RAG 依赖时的自动回退说明、索引脚本前置条件与文档引用修正 |
 | 2026-03-18 | 增量扫描 | 同步根目录 / frontend / backend 文档到当前实现：补充 runtime settings、语音转写、mock interview 本地恢复与 developer trace、RAG/non-RAG fallback、测试清单与路由面 |
@@ -74,6 +75,8 @@ graph TD
 ```
 
 ## 模块索引
+
+> 当前前端首页语义：`/` 进入面经题库，`/resume` 为简历解析独立入口。
 
 | 模块 | 路径 | 语言 | 职责 |
 |------|------|------|------|

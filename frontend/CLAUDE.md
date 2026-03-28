@@ -6,6 +6,7 @@
 
 | 时间 | 操作 | 说明 |
 |------|------|------|
+| 2026-03-28 | 增量扫描 | 首页语义切换为面经题库：`/` 映射 `QuestionBankPage`，导航首项调整为题库，`/resume` 保留为简历解析入口 |
 | 2026-03-23 | 增量扫描 | 前端本地持久化执行 cutoff：仅保留 `face-tomato-*` canonical key，移除旧品牌 key 兼容与 mock interview snapshot 版本升级描述 |
 | 2026-03-18 | 增量扫描 | 同步到当前实现：补充 runtime settings、speech 输入链路、mock interview developer trace / transcript 导出、扩展测试清单与 API 依赖 |
 | 2026-03-13 09:34:09 | 增量扫描 | 补充 mock interview、Vitest 测试、状态持久化与匿名恢复说明 |
@@ -26,6 +27,7 @@
 
 - 入口文件：`src/main.tsx`
 - 根路由：`src/App.tsx`
+- 当前首页：`/` -> `QuestionBankPage`，`/resume` 为简历解析入口
 - 开发命令：`npm run dev`
 - 构建命令：`npm run build`
 - 测试命令：`npm run test` / `npm run test:run`
@@ -37,9 +39,10 @@
 
 | 路由 | 页面 | 主要能力 |
 |------|------|------|
-| `/`、`/resume` | `ResumePage` | 上传简历、预览原文、展示与编辑结构化解析结果 |
+| `/` | `QuestionBankPage` | 首页，浏览面经列表、统计、筛选、详情 |
+| `/questions` | `QuestionBankPage` | 面经题库独立路由，能力与首页一致 |
+| `/resume` | `ResumePage` | 上传简历、预览原文、展示与编辑结构化解析结果 |
 | `/diagnosis` | `DiagnosisPage` | 结合 JD 展示概览、建议和匹配报告 |
-| `/questions` | `QuestionBankPage` | 浏览面经列表、统计、筛选、详情 |
 | `/interview` | `MockInterviewPage` | 创建模拟面试、恢复本地快照、流式对话、语音输入 |
 
 ### 依赖的后端 API（当前代码实际使用）

@@ -57,9 +57,9 @@ vi.stubGlobal(
   )
 );
 
-const renderApp = () =>
+const renderApp = (initialEntries = ["/resume"]) =>
   render(
-    <MemoryRouter initialEntries={["/resume"]}>
+    <MemoryRouter initialEntries={initialEntries}>
       <App />
     </MemoryRouter>
   );
@@ -218,6 +218,17 @@ describe("App runtime settings", () => {
     expect(screen.getByLabelText("GLM OCR API Key")).toHaveValue("");
     expect(screen.getByLabelText("Doubao App Key")).toHaveValue("");
     expect(screen.getAllByText("默认").length).toBeGreaterThan(0);
+  });
+
+  it("renders question bank page on root route and highlights its nav item first", async () => {
+    renderApp(["/"]);
+
+    expect(await screen.findByText("Question Bank Page")).toBeInTheDocument();
+
+    const navLinks = screen.getAllByRole("link");
+    expect(navLinks[0]).toHaveTextContent("面经题库");
+    expect(screen.getByRole("link", { name: "面经题库" })).toHaveClass("bg-accent");
+    expect(screen.getByRole("link", { name: "简历解析" })).not.toHaveClass("bg-accent");
   });
 
   it("renders the FaceTomato brand name in the desktop and mobile headers", async () => {

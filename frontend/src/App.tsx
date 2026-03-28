@@ -87,9 +87,9 @@ const creatingStepLabel: Record<string, string> = {
 };
 
 const navItems: NavItem[] = [
+  { path: "/questions", label: "面经题库", icon: BookOpen },
   { path: "/resume", label: "简历解析", icon: FileText },
   { path: "/diagnosis", label: "简历优化", icon: GitCompare },
-  { path: "/questions", label: "面经题库", icon: BookOpen },
   { path: "/interview", label: "模拟面试", icon: Mic },
   { path: "/interview-review", label: "面试报告", icon: ClipboardList },
 ];
@@ -625,7 +625,7 @@ const Sidebar = ({ mobile = false, onNavigate, onClose, onOpenRuntimeSettings }:
         {navItems.map((item) => {
           const isActive =
             location.pathname === item.path ||
-            (item.path === "/resume" && location.pathname === "/");
+            (item.path === "/questions" && location.pathname === "/");
           const Icon = item.icon;
 
           if (item.disabled) {
@@ -925,7 +925,7 @@ const App = () => {
                 }
               >
                 <Routes>
-                  <Route path="/" element={<ResumePage />} />
+                  <Route path="/" element={<QuestionBankPage />} />
                   <Route path="/resume" element={<ResumePage />} />
                   <Route path="/diagnosis" element={<DiagnosisPage />} />
                   <Route path="/questions" element={<QuestionBankPage />} />
